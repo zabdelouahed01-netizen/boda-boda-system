@@ -1,10 +1,11 @@
 """
-MAIN BACKEND SERVER - COMPLETE WITH RATING SYSTEM
+MAIN BACKEND SERVER - PRODUCTION VERSION FOR RENDER
 """
 
 import json
 import uuid
 import math
+import os
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -15,13 +16,326 @@ import uvicorn
 # DATABASE IMPORTS
 # ============================================
 
-from database_sqlite import (
-    create_user, get_user_by_phone, verify_user, 
-    generate_otp, verify_otp, get_driver_by_user_id,
-    update_driver_location, get_online_drivers, save_ride,
-    get_user_by_id, get_driver_stats, init_db,
-    update_driver_rating, get_driver_rating
-)
+# Use direct import without config dependency
+import sqlite3
+import random
+from datetime import timedelta
+
+DB_PATH = "boda_system.db"
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            phone TEXT UNIQUE NOT NULL,
+            name TEXT,
+            role TEXT NOT NULL,
+            is_verified INTEGER DEFAULT 0,
+            rating REAL DEFAULT 0,
+            total_rides INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS drivers (
+            id TEXT PRIMARY KEY,
+            user_id TEXT UNIQUE,
+            license_number TEXT UNIQUE,
+            bike_registration TEXT UNIQUE,
+            bike_model TEXT,
+            bike_color TEXT,
+            is_approved INTEGER DEFAULT 0,
+            is_online INTEGER DEFAULT 0,
+            current_lat REAL,
+            current_lng REAL,
+            total_earnings INTEGER DEFAULT 0,
+            today_earnings INTEGER DEFAULT 0,
+            rides_today INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS rides (
+            id TEXT PRIMARY KEY,
+            customer_id TEXT,
+            driver_id TEXT,
+            pickup_lat REAL,
+            pickup_lng REAL,
+            pickup_address TEXT,
+            destination_lat REAL,
+            destination_lng REAL,
+            destination_address TEXT,
+            distance_km REAL,
+            fare INTEGER,
+            status TEXT,
+            customer_rating INTEGER DEFAULT 0,
+            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            accepted_at TIMESTAMP,
+            started_at TIMESTAMP,
+            completed_at TIMESTAMP,
+            FOREIGN KEY (customer_id) REFERENCES users(id),
+            FOREIGN KEY (driver_id) REFERENCES users(id)
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS otps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            phone TEXT,
+            code TEXT,
+            expires_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ratings (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ride_id TEXT,
+            driver_id TEXT,
+            customer_id TEXT,
+            rating INTEGER,
+            comment TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (ride_id) REFERENCES rides(id),
+            FOREIGN KEY (driver_id) REFERENCES users(id),
+            FOREIGN KEY (customer_id) REFERENCES users(id)
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    print("✅ SQLite database ready!")
+
+def create_user(phone: str, name: str, role: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM users WHERE phone = ?", (phone,))
+    existing = cursor.fetchone()
+    
+    if existing:
+        conn.close()
+        return dict(existing)
+    
+    user_id = str(uuid.uuid4())[:8]
+    cursor.execute('''
+        INSERT INTO users (id, phone, name, role, is_verified)
+        VALUES (?, ?, ?, ?, 0)
+    ''', (user_id, phone, name, role))
+    
+    conn.commit()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    
+    print(f"✅ Created {role}: {name}")
+    return dict(user)
+
+def get_user_by_phone(phone: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE phone = ?", (phone,))
+    user = cursor.fetchone()
+    conn.close()
+    return dict(user) if user else None
+
+def get_user_by_id(user_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
+    user = cursor.fetchone()
+    conn.close()
+    return dict(user) if user else None
+
+def verify_user(phone: str, is_verified: bool = True):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET is_verified = ? WHERE phone = ?", (1 if is_verified else 0, phone))
+    conn.commit()
+    conn.close()
+
+def update_driver_rating(driver_id: str, new_rating: int):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT rating, total_rides FROM users WHERE id = ?", (driver_id,))
+    user = cursor.fetchone()
+    
+    if user:
+        current_rating = user[0] or 0
+        total_rides = user[1] or 0
+        
+        if total_rides > 0:
+            new_avg = ((current_rating * total_rides) + new_rating) / (total_rides + 1)
+        else:
+            new_avg = new_rating
+        
+        cursor.execute("UPDATE users SET rating = ? WHERE id = ?", (round(new_avg, 1), driver_id))
+        conn.commit()
+    
+    conn.close()
+    print(f"⭐ Driver {driver_id[:8]} new rating: {new_avg}/5")
+
+def get_driver_rating(driver_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT rating, total_rides FROM users WHERE id = ?", (driver_id,))
+    user = cursor.fetchone()
+    conn.close()
+    
+    if user:
+        return {'rating': user[0] or 0, 'total_rides': user[1] or 0}
+    return {'rating': 0, 'total_rides': 0}
+
+def generate_otp(phone: str) -> str:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM otps WHERE phone = ?", (phone,))
+    
+    code = str(random.randint(100000, 999999))
+    expires_at = (datetime.now() + timedelta(minutes=5)).isoformat()
+    
+    cursor.execute('''
+        INSERT INTO otps (phone, code, expires_at)
+        VALUES (?, ?, ?)
+    ''', (phone, code, expires_at))
+    
+    conn.commit()
+    conn.close()
+    
+    print(f"📱 OTP for {phone}: {code}")
+    return code
+
+def verify_otp(phone: str, code: str) -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT * FROM otps 
+        WHERE phone = ? AND code = ? AND expires_at > ?
+    ''', (phone, code, datetime.now().isoformat()))
+    
+    otp = cursor.fetchone()
+    
+    if otp:
+        cursor.execute("DELETE FROM otps WHERE phone = ?", (phone,))
+        conn.commit()
+        conn.close()
+        return True
+    
+    conn.close()
+    return False
+
+def update_driver_location(user_id: str, lat: float, lng: float, is_online: bool = True):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM drivers WHERE user_id = ?", (user_id,))
+    driver = cursor.fetchone()
+    
+    if not driver:
+        driver_id = str(uuid.uuid4())[:8]
+        cursor.execute('''
+            INSERT INTO drivers (id, user_id, is_approved, is_online, current_lat, current_lng)
+            VALUES (?, ?, 1, ?, ?, ?)
+        ''', (driver_id, user_id, 1 if is_online else 0, lat, lng))
+    else:
+        cursor.execute('''
+            UPDATE drivers SET current_lat = ?, current_lng = ?, is_online = ?
+            WHERE user_id = ?
+        ''', (lat, lng, 1 if is_online else 0, user_id))
+    
+    conn.commit()
+    conn.close()
+
+def save_ride(ride_data: dict):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    ride_id = ride_data.get('id', str(uuid.uuid4())[:8])
+    
+    cursor.execute('''
+        INSERT OR REPLACE INTO rides (
+            id, customer_id, driver_id, pickup_lat, pickup_lng,
+            destination_lat, destination_lng, distance_km, fare, status,
+            requested_at, accepted_at, started_at, completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        ride_id,
+        ride_data.get('customer_id'),
+        ride_data.get('driver_id'),
+        ride_data.get('pickup_lat'),
+        ride_data.get('pickup_lng'),
+        ride_data.get('destination_lat'),
+        ride_data.get('destination_lng'),
+        ride_data.get('distance_km'),
+        ride_data.get('fare'),
+        ride_data.get('status', 'completed'),
+        ride_data.get('requested_at', datetime.now().isoformat()),
+        ride_data.get('accepted_at'),
+        ride_data.get('started_at'),
+        ride_data.get('completed_at', datetime.now().isoformat())
+    ))
+    
+    cursor.execute('''
+        UPDATE drivers 
+        SET total_earnings = total_earnings + ?,
+            today_earnings = today_earnings + ?,
+            rides_today = rides_today + 1
+        WHERE user_id = ?
+    ''', (ride_data.get('fare', 0), ride_data.get('fare', 0), ride_data.get('driver_id')))
+    
+    cursor.execute('''
+        UPDATE users SET total_rides = total_rides + 1
+        WHERE id = ?
+    ''', (ride_data.get('customer_id'),))
+    
+    conn.commit()
+    conn.close()
+    print(f"💾 Ride {ride_id} saved to database!")
+
+def get_driver_stats(driver_user_id: str):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT total_earnings, today_earnings, rides_today, is_approved
+        FROM drivers WHERE user_id = ?
+    ''', (driver_user_id,))
+    driver = cursor.fetchone()
+    
+    cursor.execute('''
+        SELECT COUNT(*) as total_rides FROM rides WHERE driver_id = ? AND status = 'completed'
+    ''', (driver_user_id,))
+    rides = cursor.fetchone()
+    
+    conn.close()
+    
+    if driver:
+        return {
+            'total_earnings': driver[0] or 0,
+            'today_earnings': driver[1] or 0,
+            'rides_today': driver[2] or 0,
+            'total_rides': rides[0] if rides else 0,
+            'is_approved': bool(driver[3])
+        }
+    return {
+        'total_earnings': 0,
+        'today_earnings': 0,
+        'rides_today': 0,
+        'total_rides': 0,
+        'is_approved': True
+    }
 
 # ============================================
 # FARE CALCULATION
@@ -44,10 +358,6 @@ pending_rides = {}
 active_rides = {}
 connections = {}
 
-# ============================================
-# DISTANCE CALCULATION
-# ============================================
-
 def calculate_distance(lat1, lng1, lat2, lng2):
     R = 6371
     lat1_rad = math.radians(lat1)
@@ -63,14 +373,16 @@ def calculate_distance(lat1, lng1, lat2, lng2):
 # ============================================
 
 app = FastAPI()
-from backend.config import ALLOWED_ORIGINS
+
+# Allow all origins for development (update for production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Keep * for now, we'll restrict later
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 # Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
@@ -78,7 +390,7 @@ async def startup_event():
     print("✅ Database initialized")
 
 # ============================================
-# AUTHENTICATION ENDPOINTS
+# CONNECTION MANAGER
 # ============================================
 
 class ConnectionManager:
@@ -105,6 +417,10 @@ class ConnectionManager:
         return False
 
 manager = ConnectionManager()
+
+# ============================================
+# API ENDPOINTS
+# ============================================
 
 @app.post("/api/send-otp")
 async def send_otp_endpoint(request: dict):
@@ -158,28 +474,6 @@ async def verify_otp_endpoint(request: dict):
     else:
         return {"success": False, "message": "Invalid or expired OTP"}
 
-@app.get("/api/user/{user_id}")
-async def get_user_endpoint(user_id: str):
-    user = get_user_by_id(user_id)
-    if user:
-        return {"success": True, "user": user}
-    return {"success": False, "message": "User not found"}
-
-@app.get("/api/driver/stats/{user_id}")
-async def get_driver_stats_endpoint(user_id: str):
-    stats = get_driver_stats(user_id)
-    rating = get_driver_rating(user_id)
-    if stats:
-        stats['rating'] = rating['rating']
-        stats['total_rated_rides'] = rating['total_rides']
-        return {"success": True, "stats": stats}
-    return {"success": False, "message": "Driver not found"}
-
-@app.get("/api/driver/rating/{driver_id}")
-async def get_driver_rating_endpoint(driver_id: str):
-    rating = get_driver_rating(driver_id)
-    return {"success": True, "rating": rating['rating'], "total_rides": rating['total_rides']}
-
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "timestamp": datetime.now().isoformat()}
@@ -195,7 +489,7 @@ async def root():
     }
 
 # ============================================
-# DRIVER WEBSOCKET
+# WEBSOCKET ENDPOINTS
 # ============================================
 
 @app.websocket("/ws/driver/{driver_id}")
@@ -212,10 +506,8 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 driver_locations[driver_id] = {'lat': data['lat'], 'lng': data['lng']}
                 if data.get('status') == 'online':
                     online_drivers.add(driver_id)
-                    update_driver_location(driver_id, data['lat'], data['lng'], True)
                 else:
                     online_drivers.discard(driver_id)
-                    update_driver_location(driver_id, data['lat'], data['lng'], False)
                 
                 # Send location to customer if on active ride
                 for ride_id, ride in active_rides.items():
@@ -258,14 +550,12 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     })
                     
                     del pending_rides[ride_id]
-                    print(f"✅ Ride {ride_id} accepted - Distance: {distance}km, Fare: UGX {fare:,}")
+                    print(f"✅ Ride {ride_id} accepted")
             
             elif msg_type == 'ride_completed':
                 ride_id = data['ride_id']
                 fare = data.get('fare', 0)
                 distance = data.get('distance_km', 0)
-                
-                print(f"🏁 Completing ride {ride_id} - Distance: {distance}km, Fare: UGX {fare:,}")
                 
                 if ride_id in active_rides:
                     customer_id = active_rides[ride_id]['customer_id']
@@ -298,7 +588,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     })
                     
                     del active_rides[ride_id]
-                    print(f"🏁 Ride {ride_id} COMPLETED")
             
             elif msg_type == 'decline_ride':
                 ride_id = data['ride_id']
@@ -310,10 +599,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
         manager.disconnect(driver_id)
         online_drivers.discard(driver_id)
         print(f"🚪 Driver {driver_id[:8]} disconnected")
-
-# ============================================
-# CUSTOMER WEBSOCKET
-# ============================================
 
 @app.websocket("/ws/customer/{customer_id}")
 async def customer_ws(customer_id: str, websocket: WebSocket):
@@ -328,7 +613,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
             if msg_type == 'request_ride':
                 ride_id = str(uuid.uuid4())[:8]
                 
-                # Get distance from customer (already calculated)
                 distance_km = data.get('distance_km', 0)
                 if distance_km == 0 and 'dest_lat' in data:
                     distance_km = calculate_distance(
@@ -337,9 +621,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                     )
                 
                 fare = calculate_fare(distance_km)
-                print(f"🚲 New ride {ride_id} - Distance: {distance_km}km, Fare: UGX {fare:,}")
-                print(f"   📍 Pickup: ({data['pickup_lat']}, {data['pickup_lng']})")
-                print(f"   🎯 Destination: ({data.get('dest_lat', 0)}, {data.get('dest_lng', 0)})")
                 
                 # Find nearest driver
                 nearest = None
@@ -353,7 +634,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                             nearest = driver_id
                 
                 if nearest:
-                    # Store ALL location data in pending_rides
                     pending_rides[ride_id] = {
                         'customer_id': customer_id,
                         'driver_id': nearest,
@@ -367,7 +647,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'fare': fare
                     }
                     
-                    # Send COMPLETE ride request to driver with BOTH locations
                     await manager.send(nearest, {
                         'type': 'new_ride_request',
                         'ride_id': ride_id,
@@ -381,7 +660,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'fare': fare
                     })
                     
-                    # Tell customer we're looking for a driver
                     await websocket.send_json({
                         'type': 'searching_for_driver',
                         'ride_id': ride_id,
@@ -389,8 +667,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'distance_km': distance_km,
                         'message': f'Searching for driver... Fare: UGX {fare:,}'
                     })
-                    
-                    print(f"   → Sent to driver {nearest[:8]} with pickup AND destination")
                 else:
                     await websocket.send_json({
                         'type': 'no_drivers',
@@ -408,17 +684,13 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                     del pending_rides[ride_id]
                     await websocket.send_json({'type': 'ride_cancelled', 'message': 'Ride cancelled'})
             
-            # ============ RATING SYSTEM ============
             elif msg_type == 'submit_rating':
                 ride_id = data.get('ride_id')
                 driver_id = data.get('driver_id')
                 rating = data.get('rating')
                 comment = data.get('comment', '')
                 
-                print(f"⭐ Rating received - Ride: {ride_id}, Driver: {driver_id}, Rating: {rating}/5")
-                print(f"   Comment: {comment}")
-                
-                # Update driver rating in database
+                print(f"⭐ Rating received - Driver: {driver_id}, Rating: {rating}/5")
                 update_driver_rating(driver_id, rating)
                 
                 await websocket.send_json({
@@ -435,13 +707,11 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
 # ============================================
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 50)
     print("🚀 BODA BODA SYSTEM - UGANDA")
     print("=" * 50)
-    print("💰 Base Fare: UGX 5,000")
-    print("💰 Per KM: UGX 2,000")
-    print("⭐ Rating System: Active")
-    print("\n✅ Server running on http://localhost:8000")
+    print(f"📡 Server running on port {port}")
     print("=" * 50 + "\n")
     
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=port)
