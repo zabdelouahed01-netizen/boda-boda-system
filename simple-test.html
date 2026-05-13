@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Login</title>
+</head>
+<body>
+    <h1>Boda Boda Login Test</h1>
+    
+    <div>
+        <input type="text" id="phone" placeholder="Enter phone number" style="padding:10px; width:200px;">
+        <button onclick="sendOTP()" style="padding:10px;">Send OTP</button>
+    </div>
+    
+    <div id="otpDiv" style="display:none; margin-top:10px;">
+        <input type="text" id="otp" placeholder="Enter OTP" style="padding:10px; width:200px;">
+        <button onclick="verifyOTP()" style="padding:10px;">Verify</button>
+    </div>
+    
+    <div id="result" style="margin-top:20px; padding:10px; background:#f0f0f0;"></div>
+    
+    <script>
+        let currentPhone = '';
+        
+        async function sendOTP() {
+            const phone = document.getElementById('phone').value;
+            if (!phone) {
+                alert('Enter phone number');
+                return;
+            }
+            currentPhone = phone;
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Sending OTP...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/send-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: phone })
+                });
+                
+                const data = await response.json();
+                console.log('Response:', data);
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `✅ OTP Sent! Check backend console for code. OTP: ${data.otp}`;
+                    document.getElementById('otpDiv').style.display = 'block';
+                    if (data.otp) {
+                        document.getElementById('otp').value = data.otp;
+                    }
+                } else {
+                    resultDiv.innerHTML = `❌ Error: ${data.message}`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `❌ Connection error: ${error.message}. Make sure backend is running on port 8000.`;
+                console.error(error);
+            }
+        }
+        
+        async function verifyOTP() {
+            const code = document.getElementById('otp').value;
+            if (!code) {
+                alert('Enter OTP');
+                return;
+            }
+            
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = 'Verifying...';
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/verify-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        phone: currentPhone,
+                        code: code,
+                        name: 'Test User',
+                        role: 'customer'
+                    })
+                });
+                
+                const data = await response.json();
+                console.log('Response:', data);
+                
+                if (data.success) {
+                    resultDiv.innerHTML = `✅ Login successful! Welcome ${data.user.name}!`;
+                } else {
+                    resultDiv.innerHTML = `❌ Error: ${data.message}`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `❌ Connection error: ${error.message}`;
+            }
+        }
+    </script>
+</body>
+</html>

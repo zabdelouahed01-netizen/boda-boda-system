@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Boda Boda - Driver</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f5f5f5; overflow: hidden; }
+        #map { height: 50vh; width: 100%; }
+        .driver-panel {
+            position: fixed; bottom: 0; left: 0; right: 0;
+            background: white; border-radius: 20px 20px 0 0;
+            padding: 20px; max-height: 50vh; overflow-y: auto;
+        }
+        .earnings-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white; padding: 15px; border-radius: 16px; margin-bottom: 15px;
+        }
+        .earnings-card .amount { font-size: 28px; font-weight: bold; }
+        .status-toggle {
+            display: flex; justify-content: space-between; align-items: center;
+            background: #f8f9fa; padding: 15px; border-radius: 16px; margin-bottom: 15px;
+        }
+        .toggle-switch {
+            position: relative; display: inline-block; width: 60px; height: 34px;
+        }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .slider {
+            position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+            background-color: #ccc; transition: 0.3s; border-radius: 34px;
+        }
+        .slider:before {
+            position: absolute; content: ""; height: 26px; width: 26px;
+            left: 4px; bottom: 4px; background-color: white; transition: 0.3s; border-radius: 50%;
+        }
+        input:checked + .slider { background-color: #4CAF50; }
+        .badge-online { background: #4CAF50; color: white; }
+        .badge-offline { background: #f44336; color: white; }
+        .status-badge { display: inline-block; padding: 6px 14px; border-radius: 20px; font-size: 14px; font-weight: bold; }
+        
+        .ride-request {
+            background: #fff3e0; border-left: 4px solid #ff9800;
+            padding: 15px; margin-bottom: 10px; border-radius: 8px;
+        }
+        .fare-amount { font-size: 24px; font-weight: bold; color: #4CAF50; margin: 10px 0; }
+        .button-group { display: flex; gap: 10px; margin-top: 10px; }
+        .accept-btn { flex: 1; background: #4CAF50; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        .decline-btn { flex: 1; background: #f44336; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; font-weight: bold; }
+        
+        .active-ride { background: #e8f5e9; border-left: 4px solid #4CAF50; padding: 15px; border-radius: 8px; }
+        .complete-btn { background: #2196F3; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 10px; font-weight: bold; }
+        .start-btn { background: #ff9800; color: white; border: none; padding: 12px; border-radius: 8px; cursor: pointer; width: 100%; font-weight: bold; }
+        
+        .empty-state { text-align: center; padding: 30px; color: #999; }
+        .section-title { font-size: 16px; font-weight: bold; margin: 15px 0 10px 0; color: #666; }
+        .notification {
+            position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+            background: #333; color: white; padding: 12px 20px; border-radius: 50px; z-index: 1000;
+        }
+        .stats { display: flex; gap: 10px; margin-bottom: 15px; }
+        .stat-box { flex: 1; background: white; padding: 10px; border-radius: 12px; text-align: center; }
+        .stat-box .number { font-size: 20px; font-weight: bold; }
+        
+        /* Modal Styles */
+        .modal {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.8); z-index: 10000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background: white; border-radius: 20px; padding: 20px;
+            max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto;
+        }
+        .modal button { background: #4CAF50; color: white; border: none; padding: 12px; border-radius: 12px; cursor: pointer; width: 100%; margin-top: 10px; }
+        .close-btn { background: #f44336 !important; }
+        .login-content { text-align: center; max-width: 350px; }
+        .login-content input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 12px; }
+        
+        /* History Items */
+        .history-item {
+            background: #f5f5f5; padding: 15px; margin-bottom: 10px;
+            border-radius: 12px; border-left: 4px solid #ff9800;
+        }
+        .history-item-header {
+            display: flex; justify-content: space-between; align-items: center;
+        }
+        .history-fare { font-weight: bold; color: #4CAF50; font-size: 18px; }
+        .history-date { font-size: 11px; color: #999; margin-top: 5px; }
+        .history-distance { font-size: 12px; color: #666; }
+        .history-customer { font-size: 13px; font-weight: bold; margin-bottom: 5px; }
+        
+        .rating-badge {
+            background: #ff9800;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: inline-block;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div class="driver-panel" id="mainPanel" style="display:none;">
+        <div class="earnings-card">
+            <div>💰 Today's Earnings (UGX)</div>
+            <div class="amount" id="earningsAmount">UGX 0</div>
+            <small>Rides: <span id="ridesCount">0</span> <span id="ratingDisplay" class="rating-badge">⭐ 0.0</span></small>
+        </div>
+        
+        <div class="stats">
+            <div class="stat-box"><div class="number" id="onlineDriversCount">0</div><div class="label">Online</div></div>
+            <div class="stat-box"><div class="number" id="pendingRidesCount">0</div><div class="label">Pending</div></div>
+        </div>
+        
+        <div style="display:flex; gap:10px; margin-bottom:15px;">
+            <button onclick="showHistoryModal()" style="flex:1; background:#9C27B0; padding:12px; border-radius:12px; border:none; color:white; cursor:pointer;">📜 Ride History</button>
+        </div>
+        
+        <div class="status-toggle">
+            <span>🛵 Driver Status:</span>
+            <label class="toggle-switch"><input type="checkbox" id="onlineToggle"><span class="slider"></span></label>
+            <span id="statusText" class="status-badge badge-offline">Offline</span>
+        </div>
+        
+        <div id="requestsSection">
+            <div class="section-title">📋 Ride Requests</div>
+            <div id="requestsList"><div class="empty-state">Go online to receive rides</div></div>
+        </div>
+        
+        <div id="activeRideSection" style="display: none;">
+            <div class="section-title">🛵 Active Ride</div>
+            <div id="activeRideInfo"></div>
+        </div>
+    </div>
+    
+    <!-- Login Modal -->
+    <div id="loginModal" class="modal">
+        <div class="modal-content login-content">
+            <div style="font-size:64px; margin-bottom:20px;">🛵</div>
+            <h2>Driver Login</h2>
+            <p style="color:#666; margin:10px 0;">Enter your phone number to start earning</p>
+            <div id="loginStep1">
+                <input type="tel" id="phoneInput" placeholder="+256 700 000 000">
+                <button onclick="sendOTP()">Continue</button>
+            </div>
+            <div id="loginStep2" style="display:none;">
+                <input type="text" id="otpInput" placeholder="Enter 6-digit code">
+                <button onclick="verifyOTP()">Verify</button>
+                <button class="close-btn" onclick="resetLogin()">Back</button>
+            </div>
+            <div id="loginStatus" class="status-text"></div>
+        </div>
+    </div>
+    
+    <!-- History Modal -->
+    <div id="historyModal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <h3>📜 Your Ride History</h3>
+            <div id="historyList"></div>
+            <button class="close-btn" onclick="closeHistoryModal()">Close</button>
+        </div>
+    </div>
+    
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
+    <script>
+        let map, driverMarker, pickupMarker, destinationMarker, ws, currentLocation = null, currentRideId = null;
+        let isOnline = false, earnings = 0, ridesCompleted = 0;
+        let currentRideFare = 0, currentRideDistance = 0;
+        let currentUser = null;
+        let currentPickupLat = 0, currentPickupLng = 0;
+        let currentDestLat = 0, currentDestLng = 0;
+        let routingControl = null;
+        let currentPhone = '';
+        let driverRating = 0;
+        
+        // Ride History array
+        let rideHistory = [];
+        
+        async function sendOTP() {
+            const phone = document.getElementById('phoneInput').value;
+            if (!phone) { showLoginStatus('Enter phone number', 'error'); return; }
+            currentPhone = phone;
+            showLoginStatus('Sending OTP...', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/send-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: phone })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showLoginStatus('OTP sent!', 'success');
+                    document.getElementById('loginStep1').style.display = 'none';
+                    document.getElementById('loginStep2').style.display = 'block';
+                    if (data.otp) document.getElementById('otpInput').value = data.otp;
+                } else {
+                    showLoginStatus(data.message || 'Failed', 'error');
+                }
+            } catch (error) {
+                showLoginStatus('Connection error', 'error');
+            }
+        }
+        
+        async function verifyOTP() {
+            const code = document.getElementById('otpInput').value;
+            if (!code) { showLoginStatus('Enter OTP code', 'error'); return; }
+            showLoginStatus('Verifying...', 'info');
+            
+            try {
+                const response = await fetch('http://localhost:8000/api/verify-otp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phone: currentPhone, code: code, name: 'Driver', role: 'driver' })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    currentUser = data.user;
+                    localStorage.setItem('driverId', currentUser.id);
+                    loadHistoryFromStorage();
+                    showLoginStatus('Login successful!', 'success');
+                    await loadDriverRating();
+                    setTimeout(() => {
+                        document.getElementById('loginModal').style.display = 'none';
+                        document.getElementById('mainPanel').style.display = 'block';
+                        startDriverApp();
+                    }, 1000);
+                } else {
+                    showLoginStatus(data.message || 'Invalid OTP', 'error');
+                }
+            } catch (error) {
+                showLoginStatus('Connection error', 'error');
+            }
+        }
+        
+        async function loadDriverRating() {
+            try {
+                const response = await fetch(`http://localhost:8000/api/driver/rating/${currentUser.id}`);
+                const data = await response.json();
+                if (data.success) {
+                    driverRating = data.rating;
+                    document.getElementById('ratingDisplay').innerHTML = `⭐ ${driverRating.toFixed(1)}`;
+                }
+            } catch (error) {
+                console.log('Could not load rating');
+            }
+        }
+        
+        function resetLogin() {
+            document.getElementById('loginStep1').style.display = 'block';
+            document.getElementById('loginStep2').style.display = 'none';
+            document.getElementById('otpInput').value = '';
+            showLoginStatus('', '');
+        }
+        
+        function showLoginStatus(message, type) {
+            const div = document.getElementById('loginStatus');
+            div.textContent = message;
+            div.style.color = type === 'error' ? '#f44336' : type === 'success' ? '#4CAF50' : '#999';
+        }
+        
+        function checkLogin() {
+            const driverId = localStorage.getItem('driverId');
+            if (driverId) {
+                document.getElementById('loginModal').style.display = 'none';
+                document.getElementById('mainPanel').style.display = 'block';
+                currentUser = { id: driverId };
+                loadHistoryFromStorage();
+                loadDriverRating();
+                startDriverApp();
+            }
+        }
+        
+        // ============ RIDE HISTORY FUNCTIONS ============
+        function saveToHistory(ride) {
+            rideHistory.unshift({
+                id: Date.now(),
+                date: new Date().toLocaleString(),
+                pickup: ride.pickup,
+                destination: ride.destination,
+                fare: ride.fare,
+                distance: ride.distance,
+                customerName: ride.customerName || 'Customer'
+            });
+            if (rideHistory.length > 50) rideHistory.pop();
+            localStorage.setItem(`driverHistory_${currentUser.id}`, JSON.stringify(rideHistory));
+        }
+        
+        function loadHistoryFromStorage() {
+            const saved = localStorage.getItem(`driverHistory_${currentUser.id}`);
+            if (saved) {
+                rideHistory = JSON.parse(saved);
+            } else {
+                rideHistory = [];
+            }
+        }
+        
+        function showHistoryModal() {
+            const modal = document.getElementById('historyModal');
+            const historyList = document.getElementById('historyList');
+            
+            if (rideHistory.length === 0) {
+                historyList.innerHTML = '<div style="text-align:center; padding:40px; color:#999;">No rides yet. Complete your first ride!</div>';
+            } else {
+                historyList.innerHTML = rideHistory.map(ride => `
+                    <div class="history-item">
+                        <div class="history-customer">👤 ${ride.customerName}</div>
+                        <div class="history-item-header">
+                            <div><strong>📍 ${ride.destination || ride.pickup}</strong></div>
+                            <div class="history-fare">${formatUGX(ride.fare)}</div>
+                        </div>
+                        <div class="history-distance">📏 ${ride.distance}km</div>
+                        <div class="history-date">📅 ${ride.date}</div>
+                    </div>
+                `).join('');
+            }
+            modal.style.display = 'flex';
+        }
+        
+        function closeHistoryModal() {
+            document.getElementById('historyModal').style.display = 'none';
+        }
+        
+        function formatUGX(amount) { return 'UGX ' + amount.toLocaleString(); }
+        
+        function showFullRoute(pickupLat, pickupLng, destLat, destLng) {
+            if (routingControl) map.removeControl(routingControl);
+            
+            if (destLat && destLng && destLat !== 0 && destLng !== 0) {
+                routingControl = L.Routing.control({
+                    waypoints: [
+                        L.latLng(currentLocation.lat, currentLocation.lng),
+                        L.latLng(pickupLat, pickupLng),
+                        L.latLng(destLat, destLng)
+                    ],
+                    routeWhileDragging: false,
+                    lineOptions: { styles: [{ color: '#2196F3', weight: 5, opacity: 0.8 }] },
+                    createMarker: function() { return null; }
+                }).addTo(map);
+            } else {
+                routingControl = L.Routing.control({
+                    waypoints: [L.latLng(currentLocation.lat, currentLocation.lng), L.latLng(pickupLat, pickupLng)],
+                    routeWhileDragging: false,
+                    lineOptions: { styles: [{ color: '#ff9800', weight: 5, opacity: 0.8 }] },
+                    createMarker: function() { return null; }
+                }).addTo(map);
+            }
+        }
+        
+        function initMap() {
+            map = L.map('map').setView([0.3136, 32.5811], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+            
+            driverMarker = L.marker([0, 0], { icon: L.divIcon({ html: '🛵', iconSize: [35, 35] }) }).addTo(map);
+            
+            pickupMarker = L.marker([0, 0], { 
+                icon: L.divIcon({ html: '📍', iconSize: [30, 30] }),
+                title: 'Pickup Location'
+            }).addTo(map);
+            pickupMarker.setOpacity(0);
+            
+            destinationMarker = L.marker([0, 0], { 
+                icon: L.divIcon({ html: '🎯', iconSize: [30, 30] }),
+                title: 'Destination'
+            }).addTo(map);
+            destinationMarker.setOpacity(0);
+        }
+        
+        function getLocation() {
+            navigator.geolocation.getCurrentPosition(pos => {
+                currentLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                map.setView([currentLocation.lat, currentLocation.lng], 14);
+                driverMarker.setLatLng([currentLocation.lat, currentLocation.lng]);
+            });
+        }
+        
+        function startWatching() {
+            navigator.geolocation.watchPosition(pos => {
+                currentLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+                driverMarker.setLatLng([currentLocation.lat, currentLocation.lng]);
+                if (currentRideId && currentPickupLat) {
+                    showFullRoute(currentPickupLat, currentPickupLng, currentDestLat, currentDestLng);
+                }
+                if (ws && ws.readyState === WebSocket.OPEN && isOnline) {
+                    ws.send(JSON.stringify({
+                        type: 'location_update',
+                        lat: currentLocation.lat,
+                        lng: currentLocation.lng,
+                        status: 'online',
+                        current_ride_id: currentRideId
+                    }));
+                }
+            });
+        }
+        
+        function connectWebSocket() {
+            ws = new WebSocket(`ws://localhost:8000/ws/driver/${currentUser.id}`);
+            ws.onopen = () => { console.log('Connected'); showNotification('Connected', 'success'); };
+            ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                console.log('Received:', data);
+                
+                if (data.type === 'new_ride_request') {
+                    currentRideFare = data.fare;
+                    currentRideDistance = data.distance_km;
+                    currentPickupLat = data.pickup_lat;
+                    currentPickupLng = data.pickup_lng;
+                    currentDestLat = data.dest_lat || 0;
+                    currentDestLng = data.dest_lng || 0;
+                    
+                    if (currentPickupLat && currentPickupLng) {
+                        pickupMarker.setLatLng([currentPickupLat, currentPickupLng]);
+                        pickupMarker.setOpacity(1);
+                        pickupMarker.bindPopup('📍 PICKUP LOCATION').openPopup();
+                    }
+                    
+                    if (currentDestLat && currentDestLng && currentDestLat !== 0) {
+                        destinationMarker.setLatLng([currentDestLat, currentDestLng]);
+                        destinationMarker.setOpacity(1);
+                        destinationMarker.bindPopup('🎯 DESTINATION').openPopup();
+                    }
+                    
+                    const bounds = [ [currentLocation.lat, currentLocation.lng] ];
+                    if (currentPickupLat) bounds.push([currentPickupLat, currentPickupLng]);
+                    if (currentDestLat && currentDestLat !== 0) bounds.push([currentDestLat, currentDestLng]);
+                    map.fitBounds(bounds, { padding: [50, 50] });
+                    
+                    document.getElementById('requestsList').innerHTML = `
+                        <div class="ride-request" id="request_${data.ride_id}">
+                            <h4>🛵 New Ride Request!</h4>
+                            <p>📍 Pickup: ${data.pickup || 'Location on map'}</p>
+                            <p>🎯 Destination: ${data.destination || 'Not specified'}</p>
+                            <p>📏 Distance: ${data.distance_km}km away</p>
+                            <div class="fare-amount">💰 ${formatUGX(data.fare)}</div>
+                            <div class="button-group">
+                                <button class="accept-btn" onclick="acceptRide('${data.ride_id}', ${data.fare}, ${data.distance_km})">✅ Accept</button>
+                                <button class="decline-btn" onclick="declineRide('${data.ride_id}')">❌ Decline</button>
+                            </div>
+                        </div>
+                    `;
+                    playSound();
+                } else if (data.type === 'ride_accepted') {
+                    showNotification(`Ride accepted! Fare: ${formatUGX(data.fare)}`, 'success');
+                }
+            };
+            ws.onclose = () => setTimeout(connectWebSocket, 3000);
+        }
+        
+        function acceptRide(rideId, fare, distance) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'accept_ride', ride_id: rideId }));
+                
+                currentRideId = rideId;
+                currentRideFare = fare;
+                currentRideDistance = distance;
+                
+                showFullRoute(currentPickupLat, currentPickupLng, currentDestLat, currentDestLng);
+                
+                document.getElementById('requestsSection').style.display = 'none';
+                document.getElementById('activeRideSection').style.display = 'block';
+                document.getElementById('activeRideInfo').innerHTML = `
+                    <div class="active-ride">
+                        <h4>🛵 Active Ride</h4>
+                        <p>💰 Fare: ${formatUGX(fare)}</p>
+                        <p>📏 Total Distance: ${distance} km</p>
+                        <p>📍 Pickup: ${currentPickupLat.toFixed(6)}, ${currentPickupLng.toFixed(6)}</p>
+                        <p>🎯 Destination: ${currentDestLat.toFixed(6)}, ${currentDestLng.toFixed(6)}</p>
+                        <button class="start-btn" onclick="startRide()">🚀 Arrived - Start Ride</button>
+                        <button class="complete-btn" style="display:none;" id="completeBtn" onclick="completeRide()">✅ Complete Ride</button>
+                    </div>
+                `;
+                showNotification('Ride accepted! Navigate to pickup.', 'success');
+            }
+        }
+        
+        function declineRide(rideId) {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'decline_ride', ride_id: rideId }));
+                document.getElementById('requestsList').innerHTML = '<div class="empty-state">Waiting for rides...</div>';
+                pickupMarker.setOpacity(0);
+                destinationMarker.setOpacity(0);
+            }
+        }
+        
+        function startRide() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'ride_started', ride_id: currentRideId }));
+                document.querySelector('#activeRideInfo .start-btn').style.display = 'none';
+                document.getElementById('completeBtn').style.display = 'block';
+                showNotification('Ride started! Head to destination.', 'success');
+            }
+        }
+        
+        function completeRide() {
+            if (ws && ws.readyState === WebSocket.OPEN && currentRideId) {
+                // Save to history before completing
+                const destination = document.getElementById('activeRideInfo')?.innerText || 'Destination';
+                saveToHistory({
+                    pickup: `${currentPickupLat.toFixed(4)}, ${currentPickupLng.toFixed(4)}`,
+                    destination: destination,
+                    fare: currentRideFare,
+                    distance: currentRideDistance.toFixed(1),
+                    customerName: 'Customer'
+                });
+                
+                ws.send(JSON.stringify({
+                    type: 'ride_completed',
+                    ride_id: currentRideId,
+                    fare: currentRideFare,
+                    distance_km: currentRideDistance
+                }));
+                
+                earnings += currentRideFare;
+                ridesCompleted++;
+                localStorage.setItem('driverEarnings', JSON.stringify({ earnings, rides: ridesCompleted }));
+                document.getElementById('earningsAmount').textContent = formatUGX(earnings);
+                document.getElementById('ridesCount').textContent = ridesCompleted;
+                
+                showNotification(`Ride complete! Earned ${formatUGX(currentRideFare)}`, 'success');
+                
+                if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+                pickupMarker.setOpacity(0);
+                destinationMarker.setOpacity(0);
+                
+                currentRideId = null;
+                document.getElementById('requestsSection').style.display = 'block';
+                document.getElementById('activeRideSection').style.display = 'none';
+                document.getElementById('requestsList').innerHTML = '<div class="empty-state">Go online to receive rides</div>';
+                
+                loadDriverRating();
+            }
+        }
+        
+        function toggleOnline(online) {
+            isOnline = online;
+            const statusText = document.getElementById('statusText');
+            if (online) {
+                statusText.textContent = 'Online';
+                statusText.className = 'status-badge badge-online';
+                showNotification('You are ONLINE!', 'success');
+                if (ws && ws.readyState === WebSocket.OPEN && currentLocation) {
+                    ws.send(JSON.stringify({
+                        type: 'location_update',
+                        lat: currentLocation.lat,
+                        lng: currentLocation.lng,
+                        status: 'online'
+                    }));
+                }
+            } else {
+                statusText.textContent = 'Offline';
+                statusText.className = 'status-badge badge-offline';
+                showNotification('You are OFFLINE', 'info');
+            }
+        }
+        
+        function showNotification(msg, type) {
+            const n = document.createElement('div');
+            n.className = 'notification';
+            n.style.background = type === 'success' ? '#4CAF50' : type === 'error' ? '#f44336' : '#333';
+            n.textContent = msg;
+            document.body.appendChild(n);
+            setTimeout(() => n.remove(), 3000);
+        }
+        
+        function playSound() {
+            try { new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3').play(); } catch(e) {}
+        }
+        
+        function loadEarnings() {
+            const saved = localStorage.getItem('driverEarnings');
+            if (saved) {
+                const data = JSON.parse(saved);
+                earnings = data.earnings || 0;
+                ridesCompleted = data.rides || 0;
+                document.getElementById('earningsAmount').textContent = formatUGX(earnings);
+                document.getElementById('ridesCount').textContent = ridesCompleted;
+            }
+        }
+        
+        function startDriverApp() {
+            initMap();
+            getLocation();
+            startWatching();
+            connectWebSocket();
+            loadEarnings();
+        }
+        
+        document.getElementById('onlineToggle').addEventListener('change', (e) => toggleOnline(e.target.checked));
+        checkLogin();
+    </script>
+</body>
+</html>
