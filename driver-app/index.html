@@ -189,7 +189,7 @@
             showLoginStatus('Sending OTP...', 'info');
             
             try {
-                const response = await fetch('http://localhost:8000/api/send-otp', {
+                const response = await fetch('https://boda-boda-system.onrender.com/api/send-otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone: phone })
@@ -214,7 +214,7 @@
             showLoginStatus('Verifying...', 'info');
             
             try {
-                const response = await fetch('http://localhost:8000/api/verify-otp', {
+                const response = await fetch('https://boda-boda-system.onrender.com/api/verify-otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone: currentPhone, code: code, name: 'Driver', role: 'driver' })
@@ -241,7 +241,7 @@
         
         async function loadDriverRating() {
             try {
-                const response = await fetch(`http://localhost:8000/api/driver/rating/${currentUser.id}`);
+                const response = await fetch(`https://boda-boda-system.onrender.com/api/driver/rating/${currentUser.id}`);
                 const data = await response.json();
                 if (data.success) {
                     driverRating = data.rating;
@@ -400,7 +400,7 @@
         }
         
         function connectWebSocket() {
-            ws = new WebSocket(`ws://localhost:8000/ws/driver/${currentUser.id}`);
+            ws = new WebSocket(`wss://boda-boda-system.onrender.com/ws/driver/${currentUser.id}`);
             ws.onopen = () => { console.log('Connected'); showNotification('Connected', 'success'); };
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
@@ -596,3 +596,5 @@
     </script>
 </body>
 </html>
+
+

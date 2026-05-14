@@ -26,11 +26,23 @@
         .fare-card .amount { font-size: 28px; font-weight: bold; }
         .instruction { background: #fff3e0; padding: 8px; border-radius: 8px; font-size: 12px; color: #ff9800; text-align: center; }
         .button-group { display: flex; gap: 10px; }
-        .status { margin-top: 10px; padding: 10px; border-radius: 8px; text-align: center; }
+        .status { margin-top: 10px; padding: 10px; border-radius: 8px; text-align: center; font-size: 14px; }
         .success { background: #e8f5e9; color: #4CAF50; }
         .error { background: #ffebee; color: #f44336; }
         .info { background: #e3f2fd; color: #1976d2; }
-        .route-info { background: #e8f5e9; padding: 10px; border-radius: 8px; margin: 10px 0; font-size: 12px; text-align: center; }
+        .warning { background: #fff3e0; color: #ff9800; }
+        .route-info {
+            background: #e8f5e9; padding: 10px; border-radius: 8px; margin: 10px 0; font-size: 12px; text-align: center;
+        }
+        .distance-badge {
+            background: #ff9800;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 20px;
+            font-size: 12px;
+            display: inline-block;
+            margin-left: 10px;
+        }
         
         .modal {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -60,6 +72,19 @@
         
         .star-rating span { cursor: pointer; transition: transform 0.2s; display: inline-block; font-size: 40px; }
         .star-rating span:hover { transform: scale(1.2); }
+        
+        .driver-info-card {
+            background: #e8f5e9;
+            padding: 10px;
+            border-radius: 8px;
+            margin: 10px 0;
+            text-align: center;
+        }
+        .eta-text {
+            font-size: 14px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
     </style>
 </head>
 <body>
@@ -147,13 +172,15 @@
         let pickupMarker, destinationMarker, driverMarker;
         let currentUser = null;
         let routingControl = null;
+        let driverToPickupRoute = null;  // For route from driver to pickup
         let currentPhone = '';
+        let driverDistance = 0;
         
         // Rating variables
         let currentRating = 0;
         let currentRideForRating = null;
         let currentDriverForRating = null;
-        let pendingRideToSave = null; // Store ride data until rating is submitted
+        let pendingRideToSave = null;
         
         // Ride History array
         let rideHistory = [];
@@ -165,7 +192,7 @@
             showLoginStatus('Sending OTP...', 'info');
             
             try {
-                const response = await fetch('http://localhost:8000/api/send-otp', {
+                const response = await fetch('https://boda-boda-system.onrender.com/api/send-otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone: phone })
@@ -190,7 +217,7 @@
             showLoginStatus('Verifying...', 'info');
             
             try {
-                const response = await fetch('http://localhost:8000/api/verify-otp', {
+                const response = await fetch('https://boda-boda-system.onrender.com/api/verify-otp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone: currentPhone, code: code, name: 'Customer', role: 'customer' })
@@ -240,12 +267,8 @@
         
         // ============ RIDE HISTORY FUNCTIONS ============
         function saveToHistory(ride) {
-            // Check if ride already exists (prevent duplicates)
             const exists = rideHistory.some(r => r.id === ride.id);
-            if (exists) {
-                console.log('Ride already in history, skipping duplicate');
-                return;
-            }
+            if (exists) return;
             
             rideHistory.unshift({
                 id: ride.id || Date.now(),
@@ -256,10 +279,8 @@
                 rating: ride.rating || 0
             });
             
-            // Keep only last 50 rides
             if (rideHistory.length > 50) rideHistory.pop();
             localStorage.setItem(`rideHistory_${currentUser.id}`, JSON.stringify(rideHistory));
-            console.log('Ride saved to history:', ride);
         }
         
         function loadHistoryFromStorage() {
@@ -299,20 +320,33 @@
         
         function formatUGX(amount) { return 'UGX ' + amount.toLocaleString(); }
         
-        function calculateDistance(lat1, lng1, lat2, lng2) {
-            const R = 6371;
-            const dLat = (lat2 - lat1) * Math.PI / 180;
-            const dLng = (lng2 - lng1) * Math.PI / 180;
-            const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLng/2)**2;
-            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        // ============ ROUTE FUNCTIONS ============
+        function showRouteToPickup(driverLat, driverLng, pickupLat, pickupLng) {
+            if (driverToPickupRoute) {
+                map.removeControl(driverToPickupRoute);
+            }
+            
+            driverToPickupRoute = L.Routing.control({
+                waypoints: [
+                    L.latLng(driverLat, driverLng),
+                    L.latLng(pickupLat, pickupLng)
+                ],
+                routeWhileDragging: false,
+                lineOptions: {
+                    styles: [{ color: '#ff9800', weight: 5, opacity: 0.8 }]
+                },
+                createMarker: function() { return null; }
+            }).addTo(map);
+            
+            driverToPickupRoute.on('routesfound', function(e) {
+                const route = e.routes[0];
+                const distanceToPickup = route.summary.totalDistance / 1000;
+                const etaMinutes = Math.round(route.summary.totalTime / 60);
+                showNotification(`🚗 Driver is ${distanceToPickup.toFixed(1)}km away • ETA: ${etaMinutes} minutes`, 'info');
+            });
         }
         
-        function calculateFare(distance) {
-            let fare = 5000 + (distance * 2000);
-            return Math.ceil(fare / 500) * 500;
-        }
-        
-        function showRoute(startLat, startLng, endLat, endLng) {
+        function showFullRoute(startLat, startLng, endLat, endLng) {
             if (routingControl) map.removeControl(routingControl);
             
             routingControl = L.Routing.control({
@@ -337,6 +371,19 @@
             });
         }
         
+        function calculateDistance(lat1, lng1, lat2, lng2) {
+            const R = 6371;
+            const dLat = (lat2 - lat1) * Math.PI / 180;
+            const dLng = (lng2 - lng1) * Math.PI / 180;
+            const a = Math.sin(dLat/2)**2 + Math.cos(lat1 * Math.PI/180) * Math.cos(lat2 * Math.PI/180) * Math.sin(dLng/2)**2;
+            return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+        }
+        
+        function calculateFare(distance) {
+            let fare = 5000 + (distance * 2000);
+            return Math.ceil(fare / 500) * 500;
+        }
+        
         function initMap() {
             map = L.map('map').setView([0.3136, 32.5811], 13);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -356,7 +403,7 @@
             document.getElementById('destinationInput').value = `${destinationLocation.lat.toFixed(4)}, ${destinationLocation.lng.toFixed(4)}`;
             
             if (currentLocation) {
-                showRoute(currentLocation.lat, currentLocation.lng, destinationLocation.lat, destinationLocation.lng);
+                showFullRoute(currentLocation.lat, currentLocation.lng, destinationLocation.lat, destinationLocation.lng);
                 map.fitBounds([[currentLocation.lat, currentLocation.lng], [destinationLocation.lat, destinationLocation.lng]], { padding: [50,50] });
             }
             showNotification('Destination set!', 'success');
@@ -377,7 +424,7 @@
             const status = document.getElementById('status');
             status.textContent = msg;
             status.className = `status ${type}`;
-            setTimeout(() => { if (status.textContent === msg) status.className = 'status'; }, 3000);
+            setTimeout(() => { if (status.textContent === msg) status.className = 'status'; }, 5000);
         }
         
         // ============ RATING FUNCTIONS ============
@@ -397,19 +444,11 @@
             setRating(0);
             document.getElementById('ratingComment').value = '';
             document.getElementById('ratingModal').style.display = 'flex';
-            
-            // Store ride info for history - will save AFTER rating
-            pendingRideToSave = {
-                id: rideId,
-                destination: destination,
-                fare: fare,
-                distance: distance
-            };
+            pendingRideToSave = { id: rideId, destination: destination, fare: fare, distance: distance };
         }
         
         function closeRatingModal() {
             document.getElementById('ratingModal').style.display = 'none';
-            // If modal is closed without rating, still save the ride (without rating)
             if (pendingRideToSave && !rideHistory.some(r => r.id === pendingRideToSave.id)) {
                 saveToHistory({
                     id: pendingRideToSave.id,
@@ -442,7 +481,6 @@
                 }));
             }
             
-            // Save to history with rating
             if (pendingRideToSave) {
                 saveToHistory({
                     id: pendingRideToSave.id,
@@ -459,39 +497,76 @@
         }
         
         function connectWebSocket() {
-            ws = new WebSocket(`ws://localhost:8000/ws/customer/${currentUser.id}`);
-            ws.onopen = () => { console.log('Connected'); showNotification('Connected', 'success'); };
+            ws = new WebSocket(`wss://boda-boda-system.onrender.com/ws/customer/${currentUser.id}`);
+            ws.onopen = () => { console.log('Connected'); showNotification('Connected to server', 'success'); };
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
                 console.log('Received:', data);
+                
                 if (data.type === 'searching_for_driver') {
                     currentRideId = data.ride_id;
-                    showNotification(data.message, 'info');
+                    driverDistance = data.driver_distance_km || '?';
+                    showNotification(`${data.message}`, 'info');
                     document.getElementById('requestBtn').disabled = true;
                     document.getElementById('requestBtn').textContent = 'Searching...';
+                    
+                    // Update status with driver distance
+                    const statusDiv = document.getElementById('status');
+                    statusDiv.innerHTML = `🔍 Searching for driver... Nearest driver is <strong>${driverDistance}km</strong> away`;
+                    statusDiv.className = 'status info';
+                    
                 } else if (data.type === 'driver_assigned') {
                     currentDriverId = data.driver_id;
-                    showNotification(`Driver found! Fare: ${formatUGX(data.fare)}`, 'success');
+                    const driverDist = data.driver_distance_km || '?';
+                    showNotification(`✅ Driver found! They are ${driverDist}km away`, 'success');
                     document.getElementById('requestBtn').style.display = 'none';
                     document.getElementById('cancelBtn').style.display = 'block';
-                    if (data.driver_location) {
+                    
+                    if (data.driver_location && currentLocation) {
                         driverMarker.setLatLng([data.driver_location.lat, data.driver_location.lng]);
                         driverMarker.setOpacity(1);
+                        driverMarker.bindPopup(`Driver is ${driverDist}km away`).openPopup();
+                        
+                        // Show route from driver to pickup
+                        showRouteToPickup(data.driver_location.lat, data.driver_location.lng, currentLocation.lat, currentLocation.lng);
+                        
+                        // Zoom to show both locations
+                        const bounds = L.latLngBounds([
+                            [currentLocation.lat, currentLocation.lng],
+                            [data.driver_location.lat, data.driver_location.lng]
+                        ]);
+                        map.fitBounds(bounds, { padding: [50, 50] });
                     }
+                    
                 } else if (data.type === 'driver_location_update') {
-                    if (data.lat && data.lng) {
+                    if (data.lat && data.lng && currentLocation) {
                         driverMarker.setLatLng([data.lat, data.lng]);
                         driverMarker.setOpacity(1);
+                        
+                        // Update route from new driver position to pickup
+                        if (currentLocation) {
+                            if (driverToPickupRoute) map.removeControl(driverToPickupRoute);
+                            showRouteToPickup(data.lat, data.lng, currentLocation.lat, currentLocation.lng);
+                        }
+                        
+                        // Calculate ETA
+                        const distanceToPickup = calculateDistance(currentLocation.lat, currentLocation.lng, data.lat, data.lng);
+                        const eta = Math.round(distanceToPickup * 3);
+                        driverMarker.bindPopup(`Driver: ${distanceToPickup.toFixed(1)}km away • ETA: ${eta} min`).openPopup();
                     }
+                    
+                } else if (data.type === 'ride_started') {
+                    showNotification('🚀 Ride started! Enjoy your trip.', 'success');
+                    // Clear the driver-to-pickup route
+                    if (driverToPickupRoute) {
+                        map.removeControl(driverToPickupRoute);
+                        driverToPickupRoute = null;
+                    }
+                    
                 } else if (data.type === 'ride_completed') {
                     showNotification(`✅ Ride complete! ${formatUGX(data.fare)}`, 'success');
                     
-                    const destination = document.getElementById('destinationInput').value;
-                    const rideDistance = currentDistance.toFixed(1);
-                    const rideFare = data.fare;
-                    
-                    // Show rating modal (history will be saved after rating or on close)
-                    showRatingModal(data.ride_id, data.driver_id, rideFare, rideDistance, destination);
+                    showRatingModal(data.ride_id, data.driver_id, data.fare, currentDistance.toFixed(1), document.getElementById('destinationInput').value);
                     
                     currentRideId = null;
                     driverMarker.setOpacity(0);
@@ -499,16 +574,18 @@
                     document.getElementById('cancelBtn').style.display = 'none';
                     document.getElementById('requestBtn').disabled = false;
                     document.getElementById('requestBtn').textContent = '🛵 Find Boda';
+                    
                     if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+                    if (driverToPickupRoute) { map.removeControl(driverToPickupRoute); driverToPickupRoute = null; }
                     document.getElementById('routeInfo').style.display = 'none';
                     document.getElementById('fareCard').style.display = 'none';
                     
-                    // Reset destination
                     destinationLocation = null;
                     destinationMarker.setOpacity(0);
                     document.getElementById('destinationInput').value = '';
+                    
                 } else if (data.type === 'no_drivers') {
-                    showNotification('No drivers nearby', 'error');
+                    showNotification(data.message, 'error');
                     document.getElementById('requestBtn').disabled = false;
                     document.getElementById('requestBtn').textContent = '🛵 Find Boda';
                 }

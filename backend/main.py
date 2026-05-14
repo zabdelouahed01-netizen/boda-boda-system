@@ -485,14 +485,15 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     }
                     
                     # Send to customer
-                    await manager.send(customer_id, {
-                        'type': 'driver_assigned',
-                        'driver_id': driver_id,
-                        'ride_id': ride_id,
+                    aawait manager.send(customer_id, {
+                    'type': 'driver_assigned',
+                       'driver_id': driver_id,
+                     'ride_id': ride_id,
                         'fare': fare,
-                        'distance_km': distance,
-                        'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
-                    })
+                           'distance_km': distance_km,
+                              'driver_distance_km': round(min_dist, 1),  # ← Add this
+                              'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
+                       })
                     
                     # Confirm to driver
                     await websocket.send_json({
@@ -656,6 +657,7 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'ride_id': ride_id,
                         'fare': fare,
                         'distance_km': distance_km,
+                        'driver_distance_km': round(min_dist, 1),
                         'message': f'Searching for driver... Fare: UGX {fare:,}'
                     })
                      print(f"   → Sent to driver {nearest[:8]}")
