@@ -2,8 +2,9 @@
 MAIN BACKEND SERVER - COMPLETE FIXED VERSION
 - Fixed WebSocket disconnections
 - Fixed rating calculation
-- Added connection tracking
-- Added keep-alive pings
+- Fixed "No drivers nearby" bug
+- Added driver distance display
+- 50km search radius
 """
 
 import json
@@ -35,7 +36,6 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
     
-    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -49,7 +49,6 @@ def init_db():
         )
     ''')
     
-    # Drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS drivers (
             id TEXT PRIMARY KEY,
@@ -69,7 +68,6 @@ def init_db():
         )
     ''')
     
-    # Rides table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS rides (
             id TEXT PRIMARY KEY,
@@ -94,7 +92,6 @@ def init_db():
         )
     ''')
     
-    # OTP table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS otps (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -105,7 +102,6 @@ def init_db():
         )
     ''')
     
-    # Ratings table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -167,47 +163,25 @@ def verify_user(phone: str, is_verified: bool = True):
     conn.close()
 
 def update_driver_rating(driver_id: str, new_rating: int):
-    """Update driver's average rating"""
     conn = get_db()
     cursor = conn.cursor()
-    
-    # Get all ratings for this driver
-    cursor.execute("SELECT rating FROM ratings WHERE driver_id = ?", (driver_id,))
-    ratings = cursor.fetchall()
-    
-    # Calculate new average
-    total_ratings = len(ratings)
-    if total_ratings > 0:
-        sum_ratings = sum(r[0] for r in ratings)
-        new_avg = (sum_ratings + new_rating) / (total_ratings + 1)
-    else:
-        new_avg = new_rating
-    
-    # Update user's rating
-    cursor.execute("UPDATE users SET rating = ? WHERE id = ?", (round(new_avg, 1), driver_id))
-    
-    # Save individual rating
-    cursor.execute('''
-        INSERT INTO ratings (driver_id, rating, created_at)
-        VALUES (?, ?, ?)
-    ''', (driver_id, new_rating, datetime.now().isoformat()))
-    
-    conn.commit()
+    cursor.execute("SELECT rating, total_rides FROM users WHERE id = ?", (driver_id,))
+    user = cursor.fetchone()
+    if user:
+        current_rating = user[0] or 0
+        total_rides = user[1] or 0
+        new_avg = ((current_rating * total_rides) + new_rating) / (total_rides + 1) if total_rides > 0 else new_rating
+        cursor.execute("UPDATE users SET rating = ? WHERE id = ?", (round(new_avg, 1), driver_id))
+        conn.commit()
     conn.close()
-    print(f"⭐ Driver {driver_id[:8]} new average rating: {round(new_avg, 1)}/5 from {total_ratings + 1} ratings")
-    return round(new_avg, 1)
 
 def get_driver_rating(driver_id: str):
-    """Get driver's current rating"""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT rating, total_rides FROM users WHERE id = ?", (driver_id,))
     user = cursor.fetchone()
     conn.close()
-    
-    if user:
-        return {'rating': user[0] or 0, 'total_rides': user[1] or 0}
-    return {'rating': 0, 'total_rides': 0}
+    return {'rating': user[0] or 0, 'total_rides': user[1] or 0} if user else {'rating': 0, 'total_rides': 0}
 
 def generate_otp(phone: str) -> str:
     conn = get_db()
@@ -297,7 +271,6 @@ online_drivers = set()
 pending_rides = {}
 active_rides = {}
 connections = {}
-active_user_sessions = {}  # Track active connections to prevent duplicates
 
 def calculate_distance(lat1, lng1, lat2, lng2):
     R = 6371
@@ -345,20 +318,24 @@ class ConnectionManager:
     async def connect(self, user_id: str, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[user_id] = websocket
-        print(f"✅ {user_id} connected")
+        print(f"✅ {user_id} connected - Total: {len(self.active_connections)}")
     
     def disconnect(self, user_id: str):
         if user_id in self.active_connections:
             del self.active_connections[user_id]
-            print(f"❌ {user_id} disconnected")
+            print(f"❌ {user_id} disconnected - Total: {len(self.active_connections)}")
     
     async def send(self, user_id: str, message: dict):
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].send_json(message)
+                print(f"📤 Sent to {user_id}: {message.get('type')}")
                 return True
-            except:
+            except Exception as e:
+                print(f"💥 Error sending to {user_id}: {e}")
                 self.disconnect(user_id)
+        else:
+            print(f"⚠️ Cannot send to {user_id} - not connected")
         return False
 
 manager = ConnectionManager()
@@ -405,7 +382,6 @@ async def verify_otp_endpoint(request: dict):
 
 @app.get("/api/driver/rating/{driver_id}")
 async def get_driver_rating_endpoint(driver_id: str):
-    """Get driver's rating - FIXED"""
     rating = get_driver_rating(driver_id)
     return {"success": True, "rating": rating['rating'], "total_rides": rating['total_rides']}
 
@@ -420,45 +396,27 @@ async def root():
     }
 
 # ============================================
-# WEBSOCKET ENDPOINTS - FIXED
+# WEBSOCKET ENDPOINTS
 # ============================================
 
 @app.websocket("/ws/driver/{driver_id}")
 async def driver_ws(driver_id: str, websocket: WebSocket):
-    # Close existing connection if exists
-    if driver_id in active_user_sessions:
-        try:
-            await active_user_sessions[driver_id].close()
-        except:
-            pass
-        manager.disconnect(driver_id)
-    
-    active_user_sessions[driver_id] = websocket
     await manager.connect(driver_id, websocket)
-    
-    # Send ping every 30 seconds to keep connection alive
-    async def send_ping():
-        while True:
-            await asyncio.sleep(30)
-            try:
-                if driver_id in manager.active_connections:
-                    await websocket.send_json({'type': 'ping'})
-            except:
-                break
-    
-    ping_task = asyncio.create_task(send_ping())
     
     try:
         while True:
             data = await websocket.receive_json()
             msg_type = data.get('type')
+            print(f"📨 Driver {driver_id[:8]}: {msg_type}")
             
             if msg_type == 'location_update':
                 driver_locations[driver_id] = {'lat': data['lat'], 'lng': data['lng']}
                 if data.get('status') == 'online':
                     online_drivers.add(driver_id)
+                    print(f"📍 Driver {driver_id[:8]} ONLINE at ({data['lat']:.4f}, {data['lng']:.4f})")
                 else:
                     online_drivers.discard(driver_id)
+                    print(f"📍 Driver {driver_id[:8]} OFFLINE")
                 
                 # Send location to customer if on active ride
                 for ride_id, ride in active_rides.items():
@@ -471,6 +429,8 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
             
             elif msg_type == 'accept_ride':
                 ride_id = data['ride_id']
+                print(f"🎯 Driver {driver_id[:8]} accepting ride {ride_id}")
+                
                 if ride_id in pending_rides:
                     ride = pending_rides[ride_id]
                     customer_id = ride['customer_id']
@@ -486,14 +446,14 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     
                     # Send to customer
                     await manager.send(customer_id, {
-                    'type': 'driver_assigned',
-                       'driver_id': driver_id,
-                     'ride_id': ride_id,
+                        'type': 'driver_assigned',
+                        'driver_id': driver_id,
+                        'ride_id': ride_id,
                         'fare': fare,
-                           'distance_km': distance_km,
-                              'driver_distance_km': round(min_dist, 1),  # ← Add this
-                              'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
-                       })
+                        'distance_km': distance,
+                        'driver_distance_km': ride.get('driver_distance_km', 0),
+                        'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
+                    })
                     
                     # Confirm to driver
                     await websocket.send_json({
@@ -505,6 +465,8 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     
                     del pending_rides[ride_id]
                     print(f"✅ Ride {ride_id} accepted")
+                else:
+                    print(f"⚠️ Ride {ride_id} not found")
             
             elif msg_type == 'ride_started':
                 ride_id = data['ride_id']
@@ -562,36 +524,11 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(driver_id)
         online_drivers.discard(driver_id)
-        if driver_id in active_user_sessions:
-            del active_user_sessions[driver_id]
         print(f"🚪 Driver {driver_id[:8]} disconnected")
-    finally:
-        ping_task.cancel()
 
 @app.websocket("/ws/customer/{customer_id}")
 async def customer_ws(customer_id: str, websocket: WebSocket):
-    # Close existing connection if exists
-    if customer_id in active_user_sessions:
-        try:
-            await active_user_sessions[customer_id].close()
-        except:
-            pass
-        manager.disconnect(customer_id)
-    
-    active_user_sessions[customer_id] = websocket
     await manager.connect(customer_id, websocket)
-    
-    # Send ping every 30 seconds to keep connection alive
-    async def send_ping():
-        while True:
-            await asyncio.sleep(30)
-            try:
-                if customer_id in manager.active_connections:
-                    await websocket.send_json({'type': 'ping'})
-            except:
-                break
-    
-    ping_task = asyncio.create_task(send_ping())
     
     try:
         while True:
@@ -610,23 +547,28 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                     )
                 
                 fare = calculate_fare(distance_km)
+                print(f"🚲 New ride request {ride_id} - Distance: {distance_km}km, Fare: UGX {fare:,}")
                 
-                # Find nearest driver
+                # Find nearest driver within 50km
+                MAX_SEARCH_RADIUS_KM = 50
                 nearest = None
                 min_dist = float('inf')
-                for driver_id in online_drivers:
-                     loc = driver_locations.get(driver_id)
-                     if loc:
-                        dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
-                        if dist < min_dist:  # ← NO LIMIT - any distance allowed
-                         min_dist = dist
-                         nearest = driver_id
-
-                     if nearest:
-                      print(f"✅ Found driver {nearest[:8]} - Distance: {min_dist:.2f}km")
                 
-                      if nearest:
-                        pending_rides[ride_id] = {
+                print(f"🔍 Searching among {len(online_drivers)} online drivers...")
+                
+                for driver_id in online_drivers:
+                    loc = driver_locations.get(driver_id)
+                    if loc:
+                        dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
+                        print(f"   Driver {driver_id[:8]} is {dist:.2f}km away")
+                        if dist < min_dist and dist <= MAX_SEARCH_RADIUS_KM:
+                            min_dist = dist
+                            nearest = driver_id
+                
+                if nearest:
+                    print(f"✅ Found driver {nearest[:8]} - Distance: {min_dist:.2f}km")
+                    
+                    pending_rides[ride_id] = {
                         'customer_id': customer_id,
                         'driver_id': nearest,
                         'pickup': data['pickup'],
@@ -636,10 +578,12 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'dest_lat': data.get('dest_lat', 0),
                         'dest_lng': data.get('dest_lng', 0),
                         'distance_km': distance_km,
-                        'fare': fare
+                        'fare': fare,
+                        'driver_distance_km': round(min_dist, 1)
                     }
                     
-                     await manager.send(nearest, {
+                    # Send to driver
+                    await manager.send(nearest, {
                         'type': 'new_ride_request',
                         'ride_id': ride_id,
                         'pickup': data['pickup'],
@@ -652,19 +596,22 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'fare': fare
                     })
                     
-                     await websocket.send_json({
+                    # Send searching message to customer
+                    await websocket.send_json({
                         'type': 'searching_for_driver',
                         'ride_id': ride_id,
                         'fare': fare,
                         'distance_km': distance_km,
                         'driver_distance_km': round(min_dist, 1),
-                        'message': f'Searching for driver... Fare: UGX {fare:,}'
+                        'message': f'Searching for driver... Nearest driver is {round(min_dist, 1)}km away'
                     })
-                     print(f"   → Sent to driver {nearest[:8]}")
+                    print(f"   → Searching for driver within {round(min_dist, 1)}km")
+                    
                 else:
+                    print(f"❌ No drivers found within {MAX_SEARCH_RADIUS_KM}km")
                     await websocket.send_json({
                         'type': 'no_drivers',
-                        'message': 'No drivers nearby. Please try again.'
+                        'message': f'No drivers within {MAX_SEARCH_RADIUS_KM}km. Please try again.'
                     })
             
             elif msg_type == 'cancel_ride':
@@ -684,19 +631,15 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                 rating = data.get('rating')
                 comment = data.get('comment', '')
                 print(f"⭐ Rating received - Driver: {driver_id}, Rating: {rating}/5")
-                new_avg = update_driver_rating(driver_id, rating)
+                update_driver_rating(driver_id, rating)
                 await websocket.send_json({
                     'type': 'rating_confirmed',
-                    'message': f'Thank you for rating {rating} stars! Driver rating is now {new_avg}/5'
+                    'message': f'Thank you for rating {rating} stars!'
                 })
                     
     except WebSocketDisconnect:
         manager.disconnect(customer_id)
-        if customer_id in active_user_sessions:
-            del active_user_sessions[customer_id]
         print(f"🚪 Customer {customer_id[:8]} disconnected")
-    finally:
-        ping_task.cancel()
 
 # ============================================
 # RUN SERVER
@@ -705,12 +648,11 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 50)
-    print("🚀 BODA BODA SYSTEM - UGANDA (FIXED VERSION)")
+    print("🚀 BODA BODA SYSTEM - UGANDA")
     print("=" * 50)
     print(f"📡 Server running on port {port}")
-    print("✅ WebSocket keep-alive enabled")
-    print("✅ Rating system fixed")
-    print("✅ Connection tracking enabled")
+    print("📍 Driver search radius: 50km")
+    print("⭐ Rating system: Active")
     print("=" * 50 + "\n")
     
     uvicorn.run(app, host="0.0.0.0", port=port)
