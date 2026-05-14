@@ -1,25 +1,28 @@
 """
-MAIN BACKEND SERVER - PRODUCTION VERSION FOR RENDER
+MAIN BACKEND SERVER - COMPLETE FIXED VERSION
+- Fixed WebSocket disconnections
+- Fixed rating calculation
+- Added connection tracking
+- Added keep-alive pings
 """
 
 import json
 import uuid
 import math
 import os
-from datetime import datetime
+import asyncio
+from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 # ============================================
-# DATABASE IMPORTS
+# DATABASE SETUP
 # ============================================
 
-# Use direct import without config dependency
 import sqlite3
 import random
-from datetime import timedelta
 
 DB_PATH = "boda_system.db"
 
@@ -32,6 +35,7 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
     
+    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -45,6 +49,7 @@ def init_db():
         )
     ''')
     
+    # Drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS drivers (
             id TEXT PRIMARY KEY,
@@ -64,6 +69,7 @@ def init_db():
         )
     ''')
     
+    # Rides table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS rides (
             id TEXT PRIMARY KEY,
@@ -88,6 +94,7 @@ def init_db():
         )
     ''')
     
+    # OTP table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS otps (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,6 +105,7 @@ def init_db():
         )
     ''')
     
+    # Ratings table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -106,40 +114,33 @@ def init_db():
             customer_id TEXT,
             rating INTEGER,
             comment TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (ride_id) REFERENCES rides(id),
-            FOREIGN KEY (driver_id) REFERENCES users(id),
-            FOREIGN KEY (customer_id) REFERENCES users(id)
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     ''')
     
     conn.commit()
     conn.close()
-    print("✅ SQLite database ready!")
+    print("✅ Database ready")
+
+# ============================================
+# DATABASE FUNCTIONS
+# ============================================
 
 def create_user(phone: str, name: str, role: str):
     conn = get_db()
     cursor = conn.cursor()
-    
     cursor.execute("SELECT * FROM users WHERE phone = ?", (phone,))
     existing = cursor.fetchone()
-    
     if existing:
         conn.close()
         return dict(existing)
-    
     user_id = str(uuid.uuid4())[:8]
-    cursor.execute('''
-        INSERT INTO users (id, phone, name, role, is_verified)
-        VALUES (?, ?, ?, ?, 0)
-    ''', (user_id, phone, name, role))
-    
+    cursor.execute('INSERT INTO users (id, phone, name, role, is_verified) VALUES (?, ?, ?, ?, 0)', 
+                   (user_id, phone, name, role))
     conn.commit()
     cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))
     user = cursor.fetchone()
     conn.close()
-    
-    print(f"✅ Created {role}: {name}")
     return dict(user)
 
 def get_user_by_phone(phone: str):
@@ -166,27 +167,38 @@ def verify_user(phone: str, is_verified: bool = True):
     conn.close()
 
 def update_driver_rating(driver_id: str, new_rating: int):
+    """Update driver's average rating"""
     conn = get_db()
     cursor = conn.cursor()
-    cursor.execute("SELECT rating, total_rides FROM users WHERE id = ?", (driver_id,))
-    user = cursor.fetchone()
     
-    if user:
-        current_rating = user[0] or 0
-        total_rides = user[1] or 0
-        
-        if total_rides > 0:
-            new_avg = ((current_rating * total_rides) + new_rating) / (total_rides + 1)
-        else:
-            new_avg = new_rating
-        
-        cursor.execute("UPDATE users SET rating = ? WHERE id = ?", (round(new_avg, 1), driver_id))
-        conn.commit()
+    # Get all ratings for this driver
+    cursor.execute("SELECT rating FROM ratings WHERE driver_id = ?", (driver_id,))
+    ratings = cursor.fetchall()
     
+    # Calculate new average
+    total_ratings = len(ratings)
+    if total_ratings > 0:
+        sum_ratings = sum(r[0] for r in ratings)
+        new_avg = (sum_ratings + new_rating) / (total_ratings + 1)
+    else:
+        new_avg = new_rating
+    
+    # Update user's rating
+    cursor.execute("UPDATE users SET rating = ? WHERE id = ?", (round(new_avg, 1), driver_id))
+    
+    # Save individual rating
+    cursor.execute('''
+        INSERT INTO ratings (driver_id, rating, created_at)
+        VALUES (?, ?, ?)
+    ''', (driver_id, new_rating, datetime.now().isoformat()))
+    
+    conn.commit()
     conn.close()
-    print(f"⭐ Driver {driver_id[:8]} new rating: {new_avg}/5")
+    print(f"⭐ Driver {driver_id[:8]} new average rating: {round(new_avg, 1)}/5 from {total_ratings + 1} ratings")
+    return round(new_avg, 1)
 
 def get_driver_rating(driver_id: str):
+    """Get driver's current rating"""
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("SELECT rating, total_rides FROM users WHERE id = ?", (driver_id,))
@@ -201,69 +213,47 @@ def generate_otp(phone: str) -> str:
     conn = get_db()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM otps WHERE phone = ?", (phone,))
-    
     code = str(random.randint(100000, 999999))
     expires_at = (datetime.now() + timedelta(minutes=5)).isoformat()
-    
-    cursor.execute('''
-        INSERT INTO otps (phone, code, expires_at)
-        VALUES (?, ?, ?)
-    ''', (phone, code, expires_at))
-    
+    cursor.execute('INSERT INTO otps (phone, code, expires_at) VALUES (?, ?, ?)', (phone, code, expires_at))
     conn.commit()
     conn.close()
-    
     print(f"📱 OTP for {phone}: {code}")
     return code
 
 def verify_otp(phone: str, code: str) -> bool:
     conn = get_db()
     cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT * FROM otps 
-        WHERE phone = ? AND code = ? AND expires_at > ?
-    ''', (phone, code, datetime.now().isoformat()))
-    
+    cursor.execute('SELECT * FROM otps WHERE phone = ? AND code = ? AND expires_at > ?', 
+                   (phone, code, datetime.now().isoformat()))
     otp = cursor.fetchone()
-    
     if otp:
         cursor.execute("DELETE FROM otps WHERE phone = ?", (phone,))
         conn.commit()
         conn.close()
         return True
-    
     conn.close()
     return False
 
 def update_driver_location(user_id: str, lat: float, lng: float, is_online: bool = True):
     conn = get_db()
     cursor = conn.cursor()
-    
     cursor.execute("SELECT * FROM drivers WHERE user_id = ?", (user_id,))
     driver = cursor.fetchone()
-    
     if not driver:
         driver_id = str(uuid.uuid4())[:8]
-        cursor.execute('''
-            INSERT INTO drivers (id, user_id, is_approved, is_online, current_lat, current_lng)
-            VALUES (?, ?, 1, ?, ?, ?)
-        ''', (driver_id, user_id, 1 if is_online else 0, lat, lng))
+        cursor.execute('INSERT INTO drivers (id, user_id, is_approved, is_online, current_lat, current_lng) VALUES (?, ?, 1, ?, ?, ?)',
+                       (driver_id, user_id, 1 if is_online else 0, lat, lng))
     else:
-        cursor.execute('''
-            UPDATE drivers SET current_lat = ?, current_lng = ?, is_online = ?
-            WHERE user_id = ?
-        ''', (lat, lng, 1 if is_online else 0, user_id))
-    
+        cursor.execute('UPDATE drivers SET current_lat = ?, current_lng = ?, is_online = ? WHERE user_id = ?',
+                       (lat, lng, 1 if is_online else 0, user_id))
     conn.commit()
     conn.close()
 
 def save_ride(ride_data: dict):
     conn = get_db()
     cursor = conn.cursor()
-    
     ride_id = ride_data.get('id', str(uuid.uuid4())[:8])
-    
     cursor.execute('''
         INSERT OR REPLACE INTO rides (
             id, customer_id, driver_id, pickup_lat, pickup_lng,
@@ -271,71 +261,21 @@ def save_ride(ride_data: dict):
             requested_at, accepted_at, started_at, completed_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ''', (
-        ride_id,
-        ride_data.get('customer_id'),
-        ride_data.get('driver_id'),
-        ride_data.get('pickup_lat'),
-        ride_data.get('pickup_lng'),
-        ride_data.get('destination_lat'),
-        ride_data.get('destination_lng'),
-        ride_data.get('distance_km'),
-        ride_data.get('fare'),
+        ride_id, ride_data.get('customer_id'), ride_data.get('driver_id'),
+        ride_data.get('pickup_lat'), ride_data.get('pickup_lng'),
+        ride_data.get('destination_lat'), ride_data.get('destination_lng'),
+        ride_data.get('distance_km'), ride_data.get('fare'),
         ride_data.get('status', 'completed'),
         ride_data.get('requested_at', datetime.now().isoformat()),
-        ride_data.get('accepted_at'),
-        ride_data.get('started_at'),
+        ride_data.get('accepted_at'), ride_data.get('started_at'),
         ride_data.get('completed_at', datetime.now().isoformat())
     ))
-    
-    cursor.execute('''
-        UPDATE drivers 
-        SET total_earnings = total_earnings + ?,
-            today_earnings = today_earnings + ?,
-            rides_today = rides_today + 1
-        WHERE user_id = ?
-    ''', (ride_data.get('fare', 0), ride_data.get('fare', 0), ride_data.get('driver_id')))
-    
-    cursor.execute('''
-        UPDATE users SET total_rides = total_rides + 1
-        WHERE id = ?
-    ''', (ride_data.get('customer_id'),))
-    
+    cursor.execute('UPDATE drivers SET total_earnings = total_earnings + ?, rides_today = rides_today + 1 WHERE user_id = ?',
+                   (ride_data.get('fare', 0), ride_data.get('driver_id')))
+    cursor.execute('UPDATE users SET total_rides = total_rides + 1 WHERE id = ?', (ride_data.get('customer_id'),))
     conn.commit()
     conn.close()
-    print(f"💾 Ride {ride_id} saved to database!")
-
-def get_driver_stats(driver_user_id: str):
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT total_earnings, today_earnings, rides_today, is_approved
-        FROM drivers WHERE user_id = ?
-    ''', (driver_user_id,))
-    driver = cursor.fetchone()
-    
-    cursor.execute('''
-        SELECT COUNT(*) as total_rides FROM rides WHERE driver_id = ? AND status = 'completed'
-    ''', (driver_user_id,))
-    rides = cursor.fetchone()
-    
-    conn.close()
-    
-    if driver:
-        return {
-            'total_earnings': driver[0] or 0,
-            'today_earnings': driver[1] or 0,
-            'rides_today': driver[2] or 0,
-            'total_rides': rides[0] if rides else 0,
-            'is_approved': bool(driver[3])
-        }
-    return {
-        'total_earnings': 0,
-        'today_earnings': 0,
-        'rides_today': 0,
-        'total_rides': 0,
-        'is_approved': True
-    }
+    print(f"💾 Ride {ride_id} saved")
 
 # ============================================
 # FARE CALCULATION
@@ -357,6 +297,7 @@ online_drivers = set()
 pending_rides = {}
 active_rides = {}
 connections = {}
+active_user_sessions = {}  # Track active connections to prevent duplicates
 
 def calculate_distance(lat1, lng1, lat2, lng2):
     R = 6371
@@ -374,16 +315,20 @@ def calculate_distance(lat1, lng1, lat2, lng2):
 
 app = FastAPI()
 
-# Allow all origins for development (update for production)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[
+        "https://bodacustomer.netlify.app",
+        "https://bodadriver.netlify.app",
+        "https://boda-boda-system.onrender.com",
+        "http://localhost:3000",
+        "http://localhost:8000"
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize database on startup
 @app.on_event("startup")
 async def startup_event():
     init_db()
@@ -426,17 +371,10 @@ manager = ConnectionManager()
 async def send_otp_endpoint(request: dict):
     phone = request.get('phone')
     print(f"📱 Send OTP request for: {phone}")
-    
     if not phone:
         return {"success": False, "message": "Phone number required"}
-    
     otp_code = generate_otp(phone)
-    
-    return {
-        "success": True, 
-        "message": "OTP sent successfully",
-        "otp": otp_code
-    }
+    return {"success": True, "message": "OTP sent successfully", "otp": otp_code}
 
 @app.post("/api/verify-otp")
 async def verify_otp_endpoint(request: dict):
@@ -444,23 +382,14 @@ async def verify_otp_endpoint(request: dict):
     code = request.get('code')
     name = request.get('name', '')
     role = request.get('role', 'customer')
-    
-    print(f"🔐 Verify OTP for: {phone}, Code: {code}")
-    
     if not phone or not code:
         return {"success": False, "message": "Phone and OTP required"}
-    
     if verify_otp(phone, code):
         user = get_user_by_phone(phone)
-        
         if not user:
             display_name = name if name else f"User_{phone[-4:]}"
             user = create_user(phone, display_name, role)
-        
         verify_user(phone, True)
-        
-        print(f"✅ User logged in: {user['phone']}")
-        
         return {
             "success": True,
             "user": {
@@ -474,9 +403,11 @@ async def verify_otp_endpoint(request: dict):
     else:
         return {"success": False, "message": "Invalid or expired OTP"}
 
-@app.get("/api/health")
-async def health_check():
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+@app.get("/api/driver/rating/{driver_id}")
+async def get_driver_rating_endpoint(driver_id: str):
+    """Get driver's rating - FIXED"""
+    rating = get_driver_rating(driver_id)
+    return {"success": True, "rating": rating['rating'], "total_rides": rating['total_rides']}
 
 @app.get("/")
 async def root():
@@ -489,18 +420,38 @@ async def root():
     }
 
 # ============================================
-# WEBSOCKET ENDPOINTS
+# WEBSOCKET ENDPOINTS - FIXED
 # ============================================
 
 @app.websocket("/ws/driver/{driver_id}")
 async def driver_ws(driver_id: str, websocket: WebSocket):
+    # Close existing connection if exists
+    if driver_id in active_user_sessions:
+        try:
+            await active_user_sessions[driver_id].close()
+        except:
+            pass
+        manager.disconnect(driver_id)
+    
+    active_user_sessions[driver_id] = websocket
     await manager.connect(driver_id, websocket)
+    
+    # Send ping every 30 seconds to keep connection alive
+    async def send_ping():
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if driver_id in manager.active_connections:
+                    await websocket.send_json({'type': 'ping'})
+            except:
+                break
+    
+    ping_task = asyncio.create_task(send_ping())
     
     try:
         while True:
             data = await websocket.receive_json()
             msg_type = data.get('type')
-            print(f"📨 Driver {driver_id[:8]}: {msg_type}")
             
             if msg_type == 'location_update':
                 driver_locations[driver_id] = {'lat': data['lat'], 'lng': data['lng']}
@@ -533,6 +484,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'fare': fare
                     }
                     
+                    # Send to customer
                     await manager.send(customer_id, {
                         'type': 'driver_assigned',
                         'driver_id': driver_id,
@@ -542,6 +494,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
                     })
                     
+                    # Confirm to driver
                     await websocket.send_json({
                         'type': 'ride_accepted',
                         'fare': fare,
@@ -551,6 +504,16 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     
                     del pending_rides[ride_id]
                     print(f"✅ Ride {ride_id} accepted")
+            
+            elif msg_type == 'ride_started':
+                ride_id = data['ride_id']
+                if ride_id in active_rides:
+                    customer_id = active_rides[ride_id]['customer_id']
+                    await manager.send(customer_id, {
+                        'type': 'ride_started',
+                        'message': 'Your ride has started!'
+                    })
+                    print(f"🚀 Ride {ride_id} started")
             
             elif msg_type == 'ride_completed':
                 ride_id = data['ride_id']
@@ -598,11 +561,36 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(driver_id)
         online_drivers.discard(driver_id)
+        if driver_id in active_user_sessions:
+            del active_user_sessions[driver_id]
         print(f"🚪 Driver {driver_id[:8]} disconnected")
+    finally:
+        ping_task.cancel()
 
 @app.websocket("/ws/customer/{customer_id}")
 async def customer_ws(customer_id: str, websocket: WebSocket):
+    # Close existing connection if exists
+    if customer_id in active_user_sessions:
+        try:
+            await active_user_sessions[customer_id].close()
+        except:
+            pass
+        manager.disconnect(customer_id)
+    
+    active_user_sessions[customer_id] = websocket
     await manager.connect(customer_id, websocket)
+    
+    # Send ping every 30 seconds to keep connection alive
+    async def send_ping():
+        while True:
+            await asyncio.sleep(30)
+            try:
+                if customer_id in manager.active_connections:
+                    await websocket.send_json({'type': 'ping'})
+            except:
+                break
+    
+    ping_task = asyncio.create_task(send_ping())
     
     try:
         while True:
@@ -667,10 +655,11 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'distance_km': distance_km,
                         'message': f'Searching for driver... Fare: UGX {fare:,}'
                     })
+                    print(f"   → Sent to driver {nearest[:8]}")
                 else:
                     await websocket.send_json({
                         'type': 'no_drivers',
-                        'message': 'No drivers nearby'
+                        'message': 'No drivers nearby. Please try again.'
                     })
             
             elif msg_type == 'cancel_ride':
@@ -689,26 +678,21 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                 driver_id = data.get('driver_id')
                 rating = data.get('rating')
                 comment = data.get('comment', '')
-                
                 print(f"⭐ Rating received - Driver: {driver_id}, Rating: {rating}/5")
-                update_driver_rating(driver_id, rating)
-                
+                new_avg = update_driver_rating(driver_id, rating)
                 await websocket.send_json({
                     'type': 'rating_confirmed',
-                    'message': f'Thank you for rating {rating} stars!'
+                    'message': f'Thank you for rating {rating} stars! Driver rating is now {new_avg}/5'
                 })
                     
     except WebSocketDisconnect:
         manager.disconnect(customer_id)
+        if customer_id in active_user_sessions:
+            del active_user_sessions[customer_id]
         print(f"🚪 Customer {customer_id[:8]} disconnected")
+    finally:
+        ping_task.cancel()
 
-        
-@app.get("/api/driver/rating/{driver_id}")
-async def get_driver_rating_endpoint(driver_id: str):
-    """Get driver's rating"""
-    from database_sqlite import get_driver_rating
-    rating = get_driver_rating(driver_id)
-    return {"success": True, "rating": rating['rating'], "total_rides": rating['total_rides']}
 # ============================================
 # RUN SERVER
 # ============================================
@@ -716,10 +700,12 @@ async def get_driver_rating_endpoint(driver_id: str):
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 50)
-    print("🚀 BODA BODA SYSTEM - UGANDA")
+    print("🚀 BODA BODA SYSTEM - UGANDA (FIXED VERSION)")
     print("=" * 50)
     print(f"📡 Server running on port {port}")
+    print("✅ WebSocket keep-alive enabled")
+    print("✅ Rating system fixed")
+    print("✅ Connection tracking enabled")
     print("=" * 50 + "\n")
     
-    
-uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=port)
