@@ -614,15 +614,18 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                 nearest = None
                 min_dist = float('inf')
                 for driver_id in online_drivers:
-                    loc = driver_locations.get(driver_id)
-                    if loc:
+                     loc = driver_locations.get(driver_id)
+                     if loc:
                         dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
-                        if dist < min_dist and dist <= 100:
-                            min_dist = dist
-                            nearest = driver_id
+                        if dist < min_dist:  # ← NO LIMIT - any distance allowed
+                         min_dist = dist
+                         nearest = driver_id
+
+                     if nearest:
+                      print(f"✅ Found driver {nearest[:8]} - Distance: {min_dist:.2f}km")
                 
-                if nearest:
-                    pending_rides[ride_id] = {
+                      if nearest:
+                        pending_rides[ride_id] = {
                         'customer_id': customer_id,
                         'driver_id': nearest,
                         'pickup': data['pickup'],
@@ -635,7 +638,7 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'fare': fare
                     }
                     
-                    await manager.send(nearest, {
+                     await manager.send(nearest, {
                         'type': 'new_ride_request',
                         'ride_id': ride_id,
                         'pickup': data['pickup'],
@@ -648,14 +651,14 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'fare': fare
                     })
                     
-                    await websocket.send_json({
+                     await websocket.send_json({
                         'type': 'searching_for_driver',
                         'ride_id': ride_id,
                         'fare': fare,
                         'distance_km': distance_km,
                         'message': f'Searching for driver... Fare: UGX {fare:,}'
                     })
-                    print(f"   → Sent to driver {nearest[:8]}")
+                     print(f"   → Sent to driver {nearest[:8]}")
                 else:
                     await websocket.send_json({
                         'type': 'no_drivers',
