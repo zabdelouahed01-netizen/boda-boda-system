@@ -702,6 +702,13 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
         manager.disconnect(customer_id)
         print(f"🚪 Customer {customer_id[:8]} disconnected")
 
+        
+@app.get("/api/driver/rating/{driver_id}")
+async def get_driver_rating_endpoint(driver_id: str):
+    """Get driver's rating"""
+    from database_sqlite import get_driver_rating
+    rating = get_driver_rating(driver_id)
+    return {"success": True, "rating": rating['rating'], "total_rides": rating['total_rides']}
 # ============================================
 # RUN SERVER
 # ============================================
@@ -714,4 +721,5 @@ if __name__ == "__main__":
     print(f"📡 Server running on port {port}")
     print("=" * 50 + "\n")
     
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    
+uvicorn.run(app, host="0.0.0.0", port=port)
