@@ -485,7 +485,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     }
                     
                     # Send to customer
-                    aawait manager.send(customer_id, {
+                    await manager.send(customer_id, {
                     'type': 'driver_assigned',
                        'driver_id': driver_id,
                      'ride_id': ride_id,
