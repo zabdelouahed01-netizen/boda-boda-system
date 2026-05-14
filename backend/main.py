@@ -617,7 +617,7 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                     loc = driver_locations.get(driver_id)
                     if loc:
                         dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
-                        if dist < min_dist and dist <= 5:
+                        if dist < min_dist and dist <= 100:
                             min_dist = dist
                             nearest = driver_id
                 
