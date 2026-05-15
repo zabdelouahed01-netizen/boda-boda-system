@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION VERSION
+MAIN BACKEND SERVER - POSTGRESQL PRODUCTION VERSION (FULLY FIXED)
 """
 
 import json
@@ -20,7 +20,6 @@ import uvicorn
 # ============================================
 
 import asyncpg
-from asyncpg import Connection, Record
 
 DB_POOL = None
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
@@ -31,8 +30,8 @@ async def get_db():
     if DB_POOL is None:
         DB_POOL = await asyncpg.create_pool(
             DATABASE_URL,
-            min_size=5,
-            max_size=20,
+            min_size=2,
+            max_size=10,
             command_timeout=60
         )
     return await DB_POOL.acquire()
@@ -40,6 +39,21 @@ async def get_db():
 async def release_db(conn):
     """Release connection back to pool"""
     await DB_POOL.release(conn)
+
+def parse_datetime(value):
+    """Convert string to datetime object for PostgreSQL"""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        try:
+            # Handle ISO format with Z
+            value = value.replace('Z', '+00:00')
+            return datetime.fromisoformat(value)
+        except:
+            return datetime.now()
+    return datetime.now()
 
 async def init_db():
     """Initialize all tables in PostgreSQL"""
@@ -225,6 +239,7 @@ async def create_user(phone: str, name: str, role: str):
         VALUES ($1, $2, $3, $4, 0, $5)
     ''', user_id, phone, name, role, referral_code)
     
+    # Create wallet AFTER user exists
     wallet_id = str(uuid.uuid4())[:8]
     await conn.execute('INSERT INTO wallets (id, user_id, balance) VALUES ($1, $2, 0)', wallet_id, user_id)
     
@@ -316,6 +331,12 @@ async def save_ride(ride_data: dict):
     conn = await get_db()
     ride_id = ride_data.get('id', str(uuid.uuid4())[:8])
     
+    # Convert string timestamps to datetime objects
+    requested_at = parse_datetime(ride_data.get('requested_at'))
+    accepted_at = parse_datetime(ride_data.get('accepted_at'))
+    started_at = parse_datetime(ride_data.get('started_at'))
+    completed_at = parse_datetime(ride_data.get('completed_at', datetime.now()))
+    
     await conn.execute('''
         INSERT INTO rides (
             id, customer_id, driver_id, pickup_lat, pickup_lng,
@@ -327,9 +348,7 @@ async def save_ride(ride_data: dict):
         ride_data.get('destination_lat'), ride_data.get('destination_lng'),
         ride_data.get('distance_km'), ride_data.get('fare'), ride_data.get('surge_multiplier', 1.0),
         ride_data.get('status', 'completed'),
-        ride_data.get('requested_at', datetime.now().isoformat()),
-        ride_data.get('accepted_at'), ride_data.get('started_at'),
-        ride_data.get('completed_at', datetime.now().isoformat()))
+        requested_at, accepted_at, started_at, completed_at)
     
     await conn.execute('''
         UPDATE drivers SET total_earnings = total_earnings + $1, rides_today = rides_today + 1 WHERE user_id = $2
@@ -341,16 +360,26 @@ async def save_ride(ride_data: dict):
     print(f"💾 Ride {ride_id} saved")
 
 # ============================================
-# WALLET FUNCTIONS (Async)
+# WALLET FUNCTIONS (Async) - FIXED: User must exist first
 # ============================================
 
 async def get_or_create_wallet(user_id: str) -> dict:
+    """Get wallet - creates only if user exists"""
     conn = await get_db()
+    
+    # First, check if user exists
+    user = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
+    if not user:
+        await release_db(conn)
+        raise Exception(f"User {user_id} does not exist")
+    
+    # Check for wallet
     wallet = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1", user_id)
     if not wallet:
         wallet_id = str(uuid.uuid4())[:8]
         await conn.execute('INSERT INTO wallets (id, user_id, balance) VALUES ($1, $2, 0)', wallet_id, user_id)
         wallet = await conn.fetchrow("SELECT * FROM wallets WHERE id = $1", wallet_id)
+    
     await release_db(conn)
     return dict(wallet)
 
@@ -597,7 +626,7 @@ async def startup_event():
     # Check if DATABASE_URL is set
     if not DATABASE_URL:
         print("❌ DATABASE_URL environment variable is not set!")
-        print("   Please add it in Render dashboard: Settings → Environment Variables")
+        print("   Please add it in Render dashboard: Environment → Environment Variables")
         return
     
     await init_db()
@@ -669,7 +698,8 @@ async def verify_otp_endpoint(request: dict):
                     await complete_referral(referrer['id'])
         
         await verify_user(phone, True)
-        await get_or_create_wallet(user['id'])
+        
+        # Create wallet only after user exists (handled in create_user)
         
         return {
             "success": True,
@@ -708,13 +738,16 @@ async def get_user_referral_code(user_id: str):
 
 @app.get("/api/wallet/{user_id}")
 async def get_wallet(user_id: str):
-    wallet = await get_or_create_wallet(user_id)
-    return {
-        "success": True,
-        "balance": wallet['balance'],
-        "total_deposited": wallet['total_deposited'],
-        "total_withdrawn": wallet['total_withdrawn']
-    }
+    try:
+        wallet = await get_or_create_wallet(user_id)
+        return {
+            "success": True,
+            "balance": wallet['balance'],
+            "total_deposited": wallet['total_deposited'],
+            "total_withdrawn": wallet['total_withdrawn']
+        }
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 @app.post("/api/wallet/deposit")
 async def deposit_to_wallet(request: dict):
@@ -1006,7 +1039,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'fare': fare,
                         'surge_multiplier': 1.0,
                         'status': 'completed',
-                        'completed_at': datetime.now().isoformat()
+                        'completed_at': datetime.now()
                     }
                     await save_ride(ride_data)
                     
@@ -1166,7 +1199,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 60)
-    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION")
+    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FIXED)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
     print("💰 Payment system: Active")
