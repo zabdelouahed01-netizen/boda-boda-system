@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (FULLY FIXED)
+MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (FULLY FIXED WITH CASH PAYMENT HANDLING)
 """
 
 import json
@@ -104,6 +104,7 @@ async def init_db():
             fare INTEGER,
             surge_multiplier REAL DEFAULT 1.0,
             status TEXT,
+            payment_method TEXT DEFAULT 'wallet',
             customer_rating INTEGER DEFAULT 0,
             requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             accepted_at TIMESTAMP,
@@ -333,18 +334,19 @@ async def save_ride(ride_data: dict):
     accepted_at = parse_datetime(ride_data.get('accepted_at'))
     started_at = parse_datetime(ride_data.get('started_at'))
     completed_at = parse_datetime(ride_data.get('completed_at', datetime.now()))
+    payment_method = ride_data.get('payment_method', 'wallet')
     
     await conn.execute('''
         INSERT INTO rides (
             id, customer_id, driver_id, pickup_lat, pickup_lng,
             destination_lat, destination_lng, distance_km, fare, surge_multiplier, status,
-            requested_at, accepted_at, started_at, completed_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+            payment_method, requested_at, accepted_at, started_at, completed_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
     ''', ride_id, customer_id, driver_id,
         ride_data.get('pickup_lat'), ride_data.get('pickup_lng'),
         ride_data.get('destination_lat'), ride_data.get('destination_lng'),
         ride_data.get('distance_km'), ride_data.get('fare'), ride_data.get('surge_multiplier', 1.0),
-        ride_data.get('status', 'completed'),
+        ride_data.get('status', 'completed'), payment_method,
         requested_at, accepted_at, started_at, completed_at)
     
     await conn.execute('''
@@ -354,10 +356,10 @@ async def save_ride(ride_data: dict):
     await conn.execute('UPDATE users SET total_rides = total_rides + 1 WHERE id = $1', customer_id)
     
     await release_db(conn)
-    print(f"💾 Ride {ride_id} saved")
+    print(f"💾 Ride {ride_id} saved with payment method: {payment_method}")
 
 # ============================================
-# WALLET FUNCTIONS - FIXED
+# WALLET FUNCTIONS
 # ============================================
 
 async def get_or_create_wallet(user_id: str) -> dict:
@@ -384,7 +386,6 @@ async def get_wallet_balance(user_id: str) -> int:
     return result or 0
 
 async def update_wallet_balance(user_id: str, amount: int, transaction_type: str = 'credit') -> bool:
-    """Update wallet balance - debit or credit"""
     conn = await get_db()
     
     if transaction_type == 'credit':
@@ -396,7 +397,6 @@ async def update_wallet_balance(user_id: str, amount: int, transaction_type: str
             WHERE user_id = $2
         ''', amount, user_id)
     else:
-        # debit - only 2 parameters needed ($1=amount, $2=user_id)
         result = await conn.execute('''
             UPDATE wallets 
             SET balance = balance - $1, 
@@ -436,7 +436,7 @@ async def get_transactions(user_id: str, limit: int = 50) -> list:
     return [dict(t) for t in transactions]
 
 # ============================================
-# DRIVER ANALYTICS - FIXED
+# DRIVER ANALYTICS
 # ============================================
 
 async def get_driver_analytics(driver_id: str):
@@ -464,7 +464,6 @@ async def get_driver_analytics(driver_id: str):
     
     await release_db(conn)
     
-    # FIXED: Handle None values safely
     peak_hour = 17
     if peak and peak[0] is not None:
         try:
@@ -804,7 +803,6 @@ async def process_ride_payment(request: dict):
     reference = f"PAYMENT_{ride_id}_{int(datetime.now().timestamp())}"
     
     if method == 'wallet':
-        # Wallet payment - deduct from customer wallet
         balance = await get_wallet_balance(user_id)
         if balance < amount:
             return {"success": False, "message": f"Insufficient wallet balance. Available: UGX {balance}"}
@@ -824,7 +822,6 @@ async def process_ride_payment(request: dict):
         return {"success": True, "message": f"Payment of UGX {amount} completed from wallet", "reference": reference}
     
     elif method == 'cash':
-        # CASH PAYMENT - NO wallet changes, just record the transaction
         await create_transaction({
             'user_id': user_id,
             'ride_id': ride_id,
@@ -838,7 +835,6 @@ async def process_ride_payment(request: dict):
         return {"success": True, "message": "Cash payment recorded. Please pay driver directly.", "reference": reference}
     
     elif method in ['mtn', 'airtel']:
-        # Mobile money payment - no wallet changes (external payment)
         if not phone:
             return {"success": False, "message": "Phone number required for mobile money"}
         
@@ -1038,6 +1034,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 ride_id = data['ride_id']
                 fare = data.get('fare', 0)
                 distance = data.get('distance_km', 0)
+                payment_method = data.get('payment_method', 'wallet')
                 
                 if ride_id in active_rides:
                     customer_id = active_rides[ride_id]['customer_id']
@@ -1050,11 +1047,27 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'fare': fare,
                         'surge_multiplier': 1.0,
                         'status': 'completed',
+                        'payment_method': payment_method,
                         'completed_at': datetime.now()
                     }
                     await save_ride(ride_data)
                     
-                    await update_wallet_balance(driver_id, fare, 'credit')
+                    # ONLY credit driver wallet for NON-CASH payments
+                    if payment_method != 'cash':
+                        await update_wallet_balance(driver_id, fare, 'credit')
+                        await websocket.send_json({
+                            'type': 'ride_completed_confirmation',
+                            'fare': fare,
+                            'distance_km': distance,
+                            'message': f'Ride completed! UGX {fare:,} added to your wallet.'
+                        })
+                    else:
+                        await websocket.send_json({
+                            'type': 'ride_completed_confirmation',
+                            'fare': fare,
+                            'distance_km': distance,
+                            'message': f'Ride completed! Customer will pay UGX {fare:,} in cash.'
+                        })
                     
                     await manager.send(customer_id, {
                         'type': 'ride_completed',
@@ -1065,14 +1078,8 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'message': f'Ride complete! Total: UGX {fare:,}'
                     })
                     
-                    await websocket.send_json({
-                        'type': 'ride_completed_confirmation',
-                        'fare': fare,
-                        'distance_km': distance,
-                        'message': f'Ride completed! You earned UGX {fare:,}'
-                    })
-                    
                     del active_rides[ride_id]
+                    print(f"🏁 Ride {ride_id} completed with payment method: {payment_method}")
             
             elif msg_type == 'decline_ride':
                 ride_id = data['ride_id']
@@ -1210,10 +1217,10 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 60)
-    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FULLY FIXED)")
+    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (CASH PAYMENT FIXED)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
-    print("💰 Payment system: Active")
+    print("💰 Payment system: Active (Cash payments do NOT affect wallet)")
     print("⚡ Surge pricing: Active")
     print("🎁 Referral system: Active")
     print("💬 Support chat: Active")

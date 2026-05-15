@@ -20,6 +20,15 @@
             color: white; padding: 15px; border-radius: 16px; margin-bottom: 15px;
         }
         .earnings-card .amount { font-size: 28px; font-weight: bold; }
+        .cash-earnings {
+            background: #ff9800;
+            color: white;
+            padding: 10px;
+            border-radius: 12px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .cash-earnings .amount { font-size: 20px; font-weight: bold; }
         .status-toggle {
             display: flex; justify-content: space-between; align-items: center;
             background: #f8f9fa; padding: 15px; border-radius: 16px; margin-bottom: 15px;
@@ -90,6 +99,16 @@
         .history-date { font-size: 11px; color: #999; margin-top: 5px; }
         .history-distance { font-size: 12px; color: #666; }
         .history-customer { font-size: 13px; font-weight: bold; margin-bottom: 5px; }
+        .payment-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 10px;
+            margin-left: 8px;
+        }
+        .payment-wallet { background: #4CAF50; color: white; }
+        .payment-cash { background: #ff9800; color: white; }
+        .payment-mtn { background: #FFC107; color: #333; }
         
         .rating-badge {
             background: #ff9800;
@@ -136,15 +155,56 @@
             font-size: 11px;
             color: #666;
         }
+        
+        /* Payment Method Modal */
+        .payment-method-modal {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 20000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .payment-method-card {
+            background: white;
+            border-radius: 20px;
+            padding: 25px;
+            width: 300px;
+            text-align: center;
+        }
+        .payment-method-card h3 {
+            margin-bottom: 20px;
+        }
+        .payment-method-card button {
+            width: 100%;
+            padding: 15px;
+            margin: 8px 0;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        .btn-wallet { background: #4CAF50; color: white; }
+        .btn-cash { background: #ff9800; color: white; }
+        .btn-mtn { background: #FFC107; color: #333; }
+        .btn-airtel { background: #E91E63; color: white; }
     </style>
 </head>
 <body>
     <div id="map"></div>
     <div class="driver-panel" id="mainPanel" style="display:none;">
         <div class="earnings-card">
-            <div>💰 Today's Earnings (UGX)</div>
+            <div>💰 Wallet Balance (UGX)</div>
             <div class="amount" id="earningsAmount">UGX 0</div>
             <small>Rides: <span id="ridesCount">0</span> <span id="ratingDisplay" class="rating-badge">⭐ 0.0</span></small>
+        </div>
+        
+        <div class="cash-earnings" id="cashEarningsCard" style="display:none;">
+            <div>💵 Cash Earnings Today</div>
+            <div class="amount" id="cashEarningsAmount">UGX 0</div>
+            <small>Paid directly to you (not in wallet)</small>
         </div>
         
         <!-- Driver Analytics Section -->
@@ -165,9 +225,9 @@
         
         <!-- Withdrawal Section -->
         <div class="withdrawal-section">
-            <h4>💸 Withdraw Earnings</h4>
+            <h4>💸 Withdraw Wallet Balance</h4>
             <div style="background:#e8f5e9; padding:10px; border-radius:12px; margin-bottom:15px;">
-                <div style="font-size:12px; color:#666;">Available for Withdrawal</div>
+                <div style="font-size:12px; color:#666;">Available for Withdrawal (Wallet)</div>
                 <div style="font-size:24px; font-weight:bold; color:#4CAF50;" id="availableBalance">UGX 0</div>
             </div>
             <select id="withdrawMethod">
@@ -252,11 +312,21 @@
         </div>
     </div>
     
+    <!-- Payment Method Modal -->
+    <div id="paymentMethodModal" class="payment-method-modal" style="display:none;">
+        <div class="payment-method-card">
+            <h3>💵 How did customer pay?</h3>
+            <button class="btn-wallet" onclick="completeRideWithMethod('wallet')">💳 Wallet / Mobile Money</button>
+            <button class="btn-cash" onclick="completeRideWithMethod('cash')">💵 Cash (Paid to you)</button>
+            <button class="close-btn" onclick="closePaymentMethodModal()" style="background:#999; margin-top:10px;">Cancel</button>
+        </div>
+    </div>
+    
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
     <script>
         let map, driverMarker, pickupMarker, destinationMarker, ws, currentLocation = null, currentRideId = null;
-        let isOnline = false, earnings = 0, ridesCompleted = 0;
+        let isOnline = false, walletEarnings = 0, cashEarnings = 0, ridesCompleted = 0;
         let currentRideFare = 0, currentRideDistance = 0;
         let currentUser = null;
         let currentPickupLat = 0, currentPickupLng = 0;
@@ -266,6 +336,7 @@
         let driverRating = 0;
         let driverWalletBalance = 0;
         let supportWs = null;
+        let pendingPaymentMethod = null;
         
         // Ride History array
         let rideHistory = [];
@@ -313,7 +384,7 @@
                     localStorage.setItem('driverId', currentUser.id);
                     loadHistoryFromStorage();
                     showLoginStatus('Login successful!', 'success');
-                    loadDriverData();
+                    await loadDriverData();
                     setTimeout(() => {
                         document.getElementById('loginModal').style.display = 'none';
                         document.getElementById('mainPanel').style.display = 'block';
@@ -332,6 +403,22 @@
             await loadWalletBalance();
             await loadTransactions();
             await loadDriverAnalytics();
+            await loadCashEarnings();
+        }
+        
+        async function loadCashEarnings() {
+            // Load cash earnings from localStorage
+            const saved = localStorage.getItem(`driverCashEarnings_${currentUser.id}`);
+            if (saved) {
+                cashEarnings = parseInt(saved) || 0;
+                document.getElementById('cashEarningsAmount').textContent = formatUGX(cashEarnings);
+                document.getElementById('cashEarningsCard').style.display = 'block';
+            }
+        }
+        
+        function saveCashEarnings() {
+            localStorage.setItem(`driverCashEarnings_${currentUser.id}`, cashEarnings.toString());
+            document.getElementById('cashEarningsAmount').textContent = formatUGX(cashEarnings);
         }
         
         async function loadDriverRating() {
@@ -368,6 +455,7 @@
                 const data = await response.json();
                 if (data.success) {
                     driverWalletBalance = data.balance;
+                    document.getElementById('earningsAmount').textContent = formatUGX(driverWalletBalance);
                     document.getElementById('availableBalance').innerHTML = formatUGX(driverWalletBalance);
                 }
             } catch (error) {
@@ -397,7 +485,7 @@
                 return;
             }
             if (amount > driverWalletBalance) {
-                showNotification('Insufficient balance', 'error');
+                showNotification('Insufficient wallet balance', 'error');
                 return;
             }
             if (!phone) {
@@ -545,7 +633,8 @@
                 destination: ride.destination,
                 fare: ride.fare,
                 distance: ride.distance,
-                customerName: ride.customerName || 'Customer'
+                customerName: ride.customerName || 'Customer',
+                paymentMethod: ride.paymentMethod || 'wallet'
             });
             if (rideHistory.length > 50) rideHistory.pop();
             localStorage.setItem(`driverHistory_${currentUser.id}`, JSON.stringify(rideHistory));
@@ -571,7 +660,9 @@
                     <div class="history-item">
                         <div class="history-customer">👤 ${ride.customerName}</div>
                         <div class="history-item-header">
-                            <div><strong>📍 ${ride.destination || ride.pickup}</strong></div>
+                            <div><strong>📍 ${ride.destination || ride.pickup}</strong>
+                            <span class="payment-badge payment-${ride.paymentMethod}">${ride.paymentMethod === 'cash' ? '💵 Cash' : ride.paymentMethod === 'wallet' ? '💳 Wallet' : '📱 ' + ride.paymentMethod.toUpperCase()}</span>
+                            </div>
                             <div class="history-fare">${formatUGX(ride.fare)}</div>
                         </div>
                         <div class="history-distance">📏 ${ride.distance}km</div>
@@ -731,7 +822,7 @@
                         <p>📍 Pickup: ${currentPickupLat.toFixed(6)}, ${currentPickupLng.toFixed(6)}</p>
                         <p>🎯 Destination: ${currentDestLat.toFixed(6)}, ${currentDestLng.toFixed(6)}</p>
                         <button class="start-btn" onclick="startRide()">🚀 Arrived - Start Ride</button>
-                        <button class="complete-btn" style="display:none;" id="completeBtn" onclick="completeRide()">✅ Complete Ride</button>
+                        <button class="complete-btn" style="display:none;" id="completeBtn" onclick="showPaymentMethodModal()">✅ Complete Ride</button>
                     </div>
                 `;
                 showNotification('Ride accepted! Navigate to pickup.', 'success');
@@ -756,35 +847,60 @@
             }
         }
         
-        function completeRide() {
+        function showPaymentMethodModal() {
+            document.getElementById('paymentMethodModal').style.display = 'flex';
+        }
+        
+        function closePaymentMethodModal() {
+            document.getElementById('paymentMethodModal').style.display = 'none';
+            pendingPaymentMethod = null;
+        }
+        
+        function completeRideWithMethod(paymentMethod) {
+            closePaymentMethodModal();
+            
             if (ws && ws.readyState === WebSocket.OPEN && currentRideId) {
+                // Save to history with payment method
                 saveToHistory({
                     pickup: `${currentPickupLat.toFixed(4)}, ${currentPickupLng.toFixed(4)}`,
                     destination: 'Ride completed',
                     fare: currentRideFare,
                     distance: currentRideDistance.toFixed(1),
-                    customerName: 'Customer'
+                    customerName: 'Customer',
+                    paymentMethod: paymentMethod
                 });
                 
                 ws.send(JSON.stringify({
                     type: 'ride_completed',
                     ride_id: currentRideId,
                     fare: currentRideFare,
-                    distance_km: currentRideDistance
+                    distance_km: currentRideDistance,
+                    payment_method: paymentMethod
                 }));
                 
-                earnings += currentRideFare;
-                ridesCompleted++;
-                localStorage.setItem('driverEarnings', JSON.stringify({ earnings, rides: ridesCompleted }));
-                document.getElementById('earningsAmount').textContent = formatUGX(earnings);
-                document.getElementById('ridesCount').textContent = ridesCompleted;
+                // Handle earnings based on payment method
+                if (paymentMethod === 'cash') {
+                    // Cash payment - add to cash earnings, NOT wallet
+                    cashEarnings += currentRideFare;
+                    saveCashEarnings();
+                    ridesCompleted++;
+                    localStorage.setItem('driverEarnings', JSON.stringify({ earnings: walletEarnings, rides: ridesCompleted }));
+                    document.getElementById('ridesCount').textContent = ridesCompleted;
+                    showNotification(`Ride complete! Customer will pay ${formatUGX(currentRideFare)} in cash.`, 'info');
+                } else {
+                    // Wallet/MTN/Airtel - add to wallet earnings
+                    walletEarnings += currentRideFare;
+                    ridesCompleted++;
+                    localStorage.setItem('driverEarnings', JSON.stringify({ earnings: walletEarnings, rides: ridesCompleted }));
+                    document.getElementById('ridesCount').textContent = ridesCompleted;
+                    showNotification(`Ride complete! Earned ${formatUGX(currentRideFare)}`, 'success');
+                }
                 
-                // Use .then() instead of await for non-async function
-                loadWalletBalance().then(() => {
+                // Reload balances
+                setTimeout(() => {
+                    loadWalletBalance();
                     loadDriverAnalytics();
-                });
-                
-                showNotification(`Ride complete! Earned ${formatUGX(currentRideFare)}`, 'success');
+                }, 1000);
                 
                 if (routingControl) { map.removeControl(routingControl); routingControl = null; }
                 pickupMarker.setOpacity(0);
@@ -797,6 +913,11 @@
                 
                 loadDriverRating();
             }
+        }
+        
+        function completeRide() {
+            // This function is kept for compatibility but replaced by showPaymentMethodModal
+            showPaymentMethodModal();
         }
         
         function toggleOnline(online) {
@@ -838,11 +959,12 @@
             const saved = localStorage.getItem('driverEarnings');
             if (saved) {
                 const data = JSON.parse(saved);
-                earnings = data.earnings || 0;
+                walletEarnings = data.earnings || 0;
                 ridesCompleted = data.rides || 0;
-                document.getElementById('earningsAmount').textContent = formatUGX(earnings);
+                document.getElementById('earningsAmount').textContent = formatUGX(walletEarnings);
                 document.getElementById('ridesCount').textContent = ridesCompleted;
             }
+            loadCashEarnings();
         }
         
         function startDriverApp() {
