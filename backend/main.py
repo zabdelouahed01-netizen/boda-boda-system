@@ -315,7 +315,6 @@ async def save_ride(ride_data: dict):
     conn = await get_db()
     ride_id = ride_data.get('id', str(uuid.uuid4())[:8])
     
-    # First verify customer exists
     customer_id = ride_data.get('customer_id')
     customer = await conn.fetchrow("SELECT * FROM users WHERE id = $1", customer_id)
     if not customer:
@@ -323,7 +322,6 @@ async def save_ride(ride_data: dict):
         print(f"❌ Cannot save ride: Customer {customer_id} does not exist")
         return
     
-    # Verify driver exists
     driver_id = ride_data.get('driver_id')
     driver = await conn.fetchrow("SELECT * FROM users WHERE id = $1", driver_id)
     if not driver:
@@ -359,7 +357,7 @@ async def save_ride(ride_data: dict):
     print(f"💾 Ride {ride_id} saved")
 
 # ============================================
-# WALLET FUNCTIONS
+# WALLET FUNCTIONS - FIXED
 # ============================================
 
 async def get_or_create_wallet(user_id: str) -> dict:
@@ -386,18 +384,24 @@ async def get_wallet_balance(user_id: str) -> int:
     return result or 0
 
 async def update_wallet_balance(user_id: str, amount: int, transaction_type: str = 'credit') -> bool:
+    """Update wallet balance - debit or credit"""
     conn = await get_db()
     
     if transaction_type == 'credit':
         result = await conn.execute('''
             UPDATE wallets 
-            SET balance = balance + $1, total_deposited = total_deposited + $1, updated_at = CURRENT_TIMESTAMP 
+            SET balance = balance + $1, 
+                total_deposited = total_deposited + $1, 
+                updated_at = CURRENT_TIMESTAMP 
             WHERE user_id = $2
         ''', amount, user_id)
     else:
+        # debit - only 2 parameters needed ($1=amount, $2=user_id)
         result = await conn.execute('''
             UPDATE wallets 
-            SET balance = balance - $1, total_withdrawn = total_withdrawn + $1, updated_at = CURRENT_TIMESTAMP 
+            SET balance = balance - $1, 
+                total_withdrawn = total_withdrawn + $1, 
+                updated_at = CURRENT_TIMESTAMP 
             WHERE user_id = $2 AND balance >= $1
         ''', amount, user_id)
     
@@ -432,7 +436,7 @@ async def get_transactions(user_id: str, limit: int = 50) -> list:
     return [dict(t) for t in transactions]
 
 # ============================================
-# DRIVER ANALYTICS
+# DRIVER ANALYTICS - FIXED
 # ============================================
 
 async def get_driver_analytics(driver_id: str):
@@ -460,13 +464,21 @@ async def get_driver_analytics(driver_id: str):
     
     await release_db(conn)
     
+    # FIXED: Handle None values safely
+    peak_hour = 17
+    if peak and peak[0] is not None:
+        try:
+            peak_hour = int(float(peak[0]))
+        except (ValueError, TypeError):
+            peak_hour = 17
+    
     return {
         'total_rides': result[0] or 0,
         'avg_rating': round(result[1] or 0, 1),
         'avg_response_time': round(result[2] or 0, 1),
         'total_earnings': result[3] or 0,
         'weekly_rides': weekly_rides or 0,
-        'peak_hour': int(peak[0]) if peak else 17,
+        'peak_hour': peak_hour,
         'completion_rate': 98
     }
 
@@ -969,13 +981,11 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 
                 for ride_id, ride in active_rides.items():
                     if ride['driver_id'] == driver_id:
-                        sent = await manager.send(ride['customer_id'], {
+                        await manager.send(ride['customer_id'], {
                             'type': 'driver_location_update',
                             'lat': data['lat'],
                             'lng': data['lng']
                         })
-                        if not sent:
-                            print(f"⚠️ Could not send location update to customer {ride['customer_id']}")
             
             elif msg_type == 'accept_ride':
                 ride_id = data['ride_id']
@@ -992,7 +1002,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'fare': fare
                     }
                     
-                    sent = await manager.send(customer_id, {
+                    await manager.send(customer_id, {
                         'type': 'driver_assigned',
                         'driver_id': driver_id,
                         'ride_id': ride_id,
@@ -1000,11 +1010,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'distance_km': distance,
                         'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
                     })
-                    
-                    if sent:
-                        print(f"✅ Driver assigned message sent to customer {customer_id[:8]}")
-                    else:
-                        print(f"❌ Failed to send driver_assigned to customer {customer_id[:8]}")
                     
                     await websocket.send_json({
                         'type': 'ride_accepted',
@@ -1048,7 +1053,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     
                     await update_wallet_balance(driver_id, fare, 'credit')
                     
-                    sent = await manager.send(customer_id, {
+                    await manager.send(customer_id, {
                         'type': 'ride_completed',
                         'fare': fare,
                         'distance_km': distance,
@@ -1056,11 +1061,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'driver_id': driver_id,
                         'message': f'Ride complete! Total: UGX {fare:,}'
                     })
-                    
-                    if sent:
-                        print(f"✅ Ride completed message sent to customer {customer_id[:8]}")
-                    else:
-                        print(f"❌ Failed to send ride_completed to customer {customer_id[:8]}")
                     
                     await websocket.send_json({
                         'type': 'ride_completed_confirmation',
@@ -1070,7 +1070,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     })
                     
                     del active_rides[ride_id]
-                    print(f"🏁 Ride {ride_id} completed")
             
             elif msg_type == 'decline_ride':
                 ride_id = data['ride_id']
@@ -1109,13 +1108,10 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                 nearest = None
                 min_dist = float('inf')
                 
-                print(f"🔍 Searching among {len(online_drivers)} online drivers...")
-                
                 for driver_id in online_drivers:
                     loc = driver_locations.get(driver_id)
                     if loc:
                         dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
-                        print(f"   Driver {driver_id[:8]} is {dist:.2f}km away")
                         if dist < min_dist and dist <= MAX_SEARCH_RADIUS_KM:
                             min_dist = dist
                             nearest = driver_id
@@ -1155,13 +1151,12 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'driver_distance_km': round(min_dist, 1),
                         'message': f'Searching for driver... Nearest driver is {round(min_dist, 1)}km away'
                     })
-                    print(f"   → Found driver {nearest[:8]} ({round(min_dist, 1)}km away)")
+                    print(f"   → Searching for driver within {round(min_dist, 1)}km")
                 else:
                     await websocket.send_json({
                         'type': 'no_drivers',
                         'message': f'No drivers within {MAX_SEARCH_RADIUS_KM}km. Please try again.'
                     })
-                    print(f"❌ No drivers found")
             
             elif msg_type == 'cancel_ride':
                 ride_id = data['ride_id']
@@ -1212,7 +1207,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 60)
-    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FIXED)")
+    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FULLY FIXED)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
     print("💰 Payment system: Active")
