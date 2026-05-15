@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION VERSION (FULLY FIXED)
+MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (FULLY FIXED)
 """
 
 import json
@@ -25,7 +25,6 @@ DB_POOL = None
 DATABASE_URL = os.environ.get("DATABASE_URL", "")
 
 async def get_db():
-    """Get database connection from pool"""
     global DB_POOL
     if DB_POOL is None:
         DB_POOL = await asyncpg.create_pool(
@@ -37,18 +36,15 @@ async def get_db():
     return await DB_POOL.acquire()
 
 async def release_db(conn):
-    """Release connection back to pool"""
     await DB_POOL.release(conn)
 
 def parse_datetime(value):
-    """Convert string to datetime object for PostgreSQL"""
     if value is None:
         return None
     if isinstance(value, datetime):
         return value
     if isinstance(value, str):
         try:
-            # Handle ISO format with Z
             value = value.replace('Z', '+00:00')
             return datetime.fromisoformat(value)
         except:
@@ -56,10 +52,8 @@ def parse_datetime(value):
     return datetime.now()
 
 async def init_db():
-    """Initialize all tables in PostgreSQL"""
     conn = await get_db()
     
-    # Users table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -75,7 +69,6 @@ async def init_db():
         )
     ''')
     
-    # Drivers table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS drivers (
             id TEXT PRIMARY KEY,
@@ -96,7 +89,6 @@ async def init_db():
         )
     ''')
     
-    # Rides table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS rides (
             id TEXT PRIMARY KEY,
@@ -120,7 +112,6 @@ async def init_db():
         )
     ''')
     
-    # OTP table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS otps (
             id SERIAL PRIMARY KEY,
@@ -131,7 +122,6 @@ async def init_db():
         )
     ''')
     
-    # Ratings table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS ratings (
             id SERIAL PRIMARY KEY,
@@ -144,7 +134,6 @@ async def init_db():
         )
     ''')
     
-    # Wallet table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS wallets (
             id TEXT PRIMARY KEY,
@@ -157,7 +146,6 @@ async def init_db():
         )
     ''')
     
-    # Transactions table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS transactions (
             id TEXT PRIMARY KEY,
@@ -175,7 +163,6 @@ async def init_db():
         )
     ''')
     
-    # Payouts table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS payouts (
             id TEXT PRIMARY KEY,
@@ -190,7 +177,6 @@ async def init_db():
         )
     ''')
     
-    # Referrals table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS referrals (
             id TEXT PRIMARY KEY,
@@ -205,7 +191,6 @@ async def init_db():
         )
     ''')
     
-    # Support Messages table
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS support_messages (
             id SERIAL PRIMARY KEY,
@@ -220,7 +205,7 @@ async def init_db():
     print("✅ PostgreSQL database ready")
 
 # ============================================
-# DATABASE FUNCTIONS (Async)
+# DATABASE FUNCTIONS
 # ============================================
 
 async def create_user(phone: str, name: str, role: str):
@@ -239,7 +224,6 @@ async def create_user(phone: str, name: str, role: str):
         VALUES ($1, $2, $3, $4, 0, $5)
     ''', user_id, phone, name, role, referral_code)
     
-    # Create wallet AFTER user exists
     wallet_id = str(uuid.uuid4())[:8]
     await conn.execute('INSERT INTO wallets (id, user_id, balance) VALUES ($1, $2, 0)', wallet_id, user_id)
     
@@ -331,7 +315,22 @@ async def save_ride(ride_data: dict):
     conn = await get_db()
     ride_id = ride_data.get('id', str(uuid.uuid4())[:8])
     
-    # Convert string timestamps to datetime objects
+    # First verify customer exists
+    customer_id = ride_data.get('customer_id')
+    customer = await conn.fetchrow("SELECT * FROM users WHERE id = $1", customer_id)
+    if not customer:
+        await release_db(conn)
+        print(f"❌ Cannot save ride: Customer {customer_id} does not exist")
+        return
+    
+    # Verify driver exists
+    driver_id = ride_data.get('driver_id')
+    driver = await conn.fetchrow("SELECT * FROM users WHERE id = $1", driver_id)
+    if not driver:
+        await release_db(conn)
+        print(f"❌ Cannot save ride: Driver {driver_id} does not exist")
+        return
+    
     requested_at = parse_datetime(ride_data.get('requested_at'))
     accepted_at = parse_datetime(ride_data.get('accepted_at'))
     started_at = parse_datetime(ride_data.get('started_at'))
@@ -343,7 +342,7 @@ async def save_ride(ride_data: dict):
             destination_lat, destination_lng, distance_km, fare, surge_multiplier, status,
             requested_at, accepted_at, started_at, completed_at
         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-    ''', ride_id, ride_data.get('customer_id'), ride_data.get('driver_id'),
+    ''', ride_id, customer_id, driver_id,
         ride_data.get('pickup_lat'), ride_data.get('pickup_lng'),
         ride_data.get('destination_lat'), ride_data.get('destination_lng'),
         ride_data.get('distance_km'), ride_data.get('fare'), ride_data.get('surge_multiplier', 1.0),
@@ -352,28 +351,25 @@ async def save_ride(ride_data: dict):
     
     await conn.execute('''
         UPDATE drivers SET total_earnings = total_earnings + $1, rides_today = rides_today + 1 WHERE user_id = $2
-    ''', ride_data.get('fare', 0), ride_data.get('driver_id'))
+    ''', ride_data.get('fare', 0), driver_id)
     
-    await conn.execute('UPDATE users SET total_rides = total_rides + 1 WHERE id = $1', ride_data.get('customer_id'))
+    await conn.execute('UPDATE users SET total_rides = total_rides + 1 WHERE id = $1', customer_id)
     
     await release_db(conn)
     print(f"💾 Ride {ride_id} saved")
 
 # ============================================
-# WALLET FUNCTIONS (Async) - FIXED: User must exist first
+# WALLET FUNCTIONS
 # ============================================
 
 async def get_or_create_wallet(user_id: str) -> dict:
-    """Get wallet - creates only if user exists"""
     conn = await get_db()
     
-    # First, check if user exists
     user = await conn.fetchrow("SELECT * FROM users WHERE id = $1", user_id)
     if not user:
         await release_db(conn)
         raise Exception(f"User {user_id} does not exist")
     
-    # Check for wallet
     wallet = await conn.fetchrow("SELECT * FROM wallets WHERE user_id = $1", user_id)
     if not wallet:
         wallet_id = str(uuid.uuid4())[:8]
@@ -403,7 +399,7 @@ async def update_wallet_balance(user_id: str, amount: int, transaction_type: str
             UPDATE wallets 
             SET balance = balance - $1, total_withdrawn = total_withdrawn + $1, updated_at = CURRENT_TIMESTAMP 
             WHERE user_id = $2 AND balance >= $1
-        ''', amount, user_id, amount)
+        ''', amount, user_id)
     
     await release_db(conn)
     return result != "UPDATE 0"
@@ -623,10 +619,8 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.on_event("startup")
 async def startup_event():
-    # Check if DATABASE_URL is set
     if not DATABASE_URL:
         print("❌ DATABASE_URL environment variable is not set!")
-        print("   Please add it in Render dashboard: Environment → Environment Variables")
         return
     
     await init_db()
@@ -654,9 +648,13 @@ class ConnectionManager:
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].send_json(message)
+                print(f"📤 Sent to {user_id}: {message.get('type')}")
                 return True
-            except:
+            except Exception as e:
+                print(f"💥 Error sending to {user_id}: {e}")
                 self.disconnect(user_id)
+        else:
+            print(f"⚠️ User {user_id} not connected")
         return False
 
 manager = ConnectionManager()
@@ -698,8 +696,6 @@ async def verify_otp_endpoint(request: dict):
                     await complete_referral(referrer['id'])
         
         await verify_user(phone, True)
-        
-        # Create wallet only after user exists (handled in create_user)
         
         return {
             "success": True,
@@ -973,11 +969,13 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 
                 for ride_id, ride in active_rides.items():
                     if ride['driver_id'] == driver_id:
-                        await manager.send(ride['customer_id'], {
+                        sent = await manager.send(ride['customer_id'], {
                             'type': 'driver_location_update',
                             'lat': data['lat'],
                             'lng': data['lng']
                         })
+                        if not sent:
+                            print(f"⚠️ Could not send location update to customer {ride['customer_id']}")
             
             elif msg_type == 'accept_ride':
                 ride_id = data['ride_id']
@@ -994,7 +992,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'fare': fare
                     }
                     
-                    await manager.send(customer_id, {
+                    sent = await manager.send(customer_id, {
                         'type': 'driver_assigned',
                         'driver_id': driver_id,
                         'ride_id': ride_id,
@@ -1002,6 +1000,11 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'distance_km': distance,
                         'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
                     })
+                    
+                    if sent:
+                        print(f"✅ Driver assigned message sent to customer {customer_id[:8]}")
+                    else:
+                        print(f"❌ Failed to send driver_assigned to customer {customer_id[:8]}")
                     
                     await websocket.send_json({
                         'type': 'ride_accepted',
@@ -1045,7 +1048,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     
                     await update_wallet_balance(driver_id, fare, 'credit')
                     
-                    await manager.send(customer_id, {
+                    sent = await manager.send(customer_id, {
                         'type': 'ride_completed',
                         'fare': fare,
                         'distance_km': distance,
@@ -1053,6 +1056,11 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'driver_id': driver_id,
                         'message': f'Ride complete! Total: UGX {fare:,}'
                     })
+                    
+                    if sent:
+                        print(f"✅ Ride completed message sent to customer {customer_id[:8]}")
+                    else:
+                        print(f"❌ Failed to send ride_completed to customer {customer_id[:8]}")
                     
                     await websocket.send_json({
                         'type': 'ride_completed_confirmation',
@@ -1062,6 +1070,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     })
                     
                     del active_rides[ride_id]
+                    print(f"🏁 Ride {ride_id} completed")
             
             elif msg_type == 'decline_ride':
                 ride_id = data['ride_id']
@@ -1100,10 +1109,13 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                 nearest = None
                 min_dist = float('inf')
                 
+                print(f"🔍 Searching among {len(online_drivers)} online drivers...")
+                
                 for driver_id in online_drivers:
                     loc = driver_locations.get(driver_id)
                     if loc:
                         dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
+                        print(f"   Driver {driver_id[:8]} is {dist:.2f}km away")
                         if dist < min_dist and dist <= MAX_SEARCH_RADIUS_KM:
                             min_dist = dist
                             nearest = driver_id
@@ -1143,12 +1155,13 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'driver_distance_km': round(min_dist, 1),
                         'message': f'Searching for driver... Nearest driver is {round(min_dist, 1)}km away'
                     })
-                    print(f"   → Searching for driver within {round(min_dist, 1)}km")
+                    print(f"   → Found driver {nearest[:8]} ({round(min_dist, 1)}km away)")
                 else:
                     await websocket.send_json({
                         'type': 'no_drivers',
                         'message': f'No drivers within {MAX_SEARCH_RADIUS_KM}km. Please try again.'
                     })
+                    print(f"❌ No drivers found")
             
             elif msg_type == 'cancel_ride':
                 ride_id = data['ride_id']
