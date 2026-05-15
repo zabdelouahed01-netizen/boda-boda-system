@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Boda Boda - Admin Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: Arial, sans-serif; background: #f0f2f5; }
+        
+        /* Sidebar */
+        .sidebar {
+            position: fixed; left: 0; top: 0; bottom: 0; width: 260px;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white; padding: 20px;
+        }
+        .sidebar h2 { margin-bottom: 30px; font-size: 20px; }
+        .sidebar .nav-item {
+            padding: 12px 15px; margin: 5px 0; border-radius: 10px;
+            cursor: pointer; transition: all 0.3s;
+        }
+        .sidebar .nav-item:hover, .sidebar .nav-item.active {
+            background: rgba(255,255,255,0.1);
+        }
+        
+        /* Main Content */
+        .main-content {
+            margin-left: 260px; padding: 20px;
+        }
+        
+        /* Stats Cards */
+        .stats-grid {
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px; margin-bottom: 30px;
+        }
+        .stat-card {
+            background: white; padding: 20px; border-radius: 15px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .stat-card h3 { font-size: 14px; color: #666; margin-bottom: 10px; }
+        .stat-card .number { font-size: 32px; font-weight: bold; color: #333; }
+        .stat-card .trend { font-size: 12px; margin-top: 5px; }
+        .trend-up { color: #4CAF50; }
+        .trend-down { color: #f44336; }
+        
+        /* Tables */
+        .table-container {
+            background: white; border-radius: 15px; padding: 20px;
+            margin-bottom: 20px; overflow-x: auto;
+        }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
+        th { background: #f8f9fa; font-weight: bold; }
+        
+        /* Buttons */
+        .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; }
+        .btn-primary { background: #4CAF50; color: white; }
+        .btn-danger { background: #f44336; color: white; }
+        .btn-warning { background: #ff9800; color: white; }
+        
+        /* Modal */
+        .modal {
+            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;
+        }
+        .modal-content {
+            background: white; padding: 30px; border-radius: 20px;
+            max-width: 500px; width: 90%;
+        }
+        .modal input, .modal select, .modal textarea {
+            width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px;
+        }
+    </style>
+</head>
+<body>
+    <div class="sidebar">
+        <h2>🚀 Boda Boda Admin</h2>
+        <div class="nav-item active" onclick="showSection('overview')">📊 Overview</div>
+        <div class="nav-item" onclick="showSection('drivers')">🛵 Drivers</div>
+        <div class="nav-item" onclick="showSection('rides')">🚲 Rides</div>
+        <div class="nav-item" onclick="showSection('earnings')">💰 Earnings</div>
+        <div class="nav-item" onclick="showSection('surge')">⚡ Surge Pricing</div>
+        <div class="nav-item" onclick="showSection('referrals')">🎁 Referrals</div>
+        <div class="nav-item" onclick="showSection('support')">💬 Support</div>
+    </div>
+    
+    <div class="main-content" id="mainContent">
+        <!-- Overview Section -->
+        <div id="overviewSection">
+            <div class="stats-grid" id="statsGrid"></div>
+            <div class="table-container">
+                <h3>Recent Rides</h3>
+                <div id="recentRidesTable"></div>
+            </div>
+        </div>
+        
+        <!-- Drivers Section -->
+        <div id="driversSection" style="display:none;">
+            <div class="table-container">
+                <h3>All Drivers</h3>
+                <div id="driversTable"></div>
+            </div>
+        </div>
+        
+        <!-- Rides Section -->
+        <div id="ridesSection" style="display:none;">
+            <div class="table-container">
+                <h3>All Rides</h3>
+                <div id="ridesTable"></div>
+            </div>
+        </div>
+        
+        <!-- Earnings Section -->
+        <div id="earningsSection" style="display:none;">
+            <div class="stats-grid">
+                <div class="stat-card"><h3>Total Platform Earnings</h3><div class="number" id="totalEarnings">UGX 0</div></div>
+                <div class="stat-card"><h3>This Month</h3><div class="number" id="monthEarnings">UGX 0</div></div>
+                <div class="stat-card"><h3>Commission Collected</h3><div class="number" id="commissionEarnings">UGX 0</div></div>
+            </div>
+            <div class="table-container">
+                <h3>Payout History</h3>
+                <div id="payoutsTable"></div>
+            </div>
+        </div>
+        
+        <!-- Surge Pricing Section -->
+        <div id="surgeSection" style="display:none;">
+            <div class="table-container">
+                <h3>Surge Pricing Zones</h3>
+                <div id="surgeZones"></div>
+                <button class="btn btn-primary" onclick="addSurgeZone()" style="margin-top:20px;">+ Add Surge Zone</button>
+            </div>
+        </div>
+        
+        <!-- Referrals Section -->
+        <div id="referralsSection" style="display:none;">
+            <div class="stats-grid">
+                <div class="stat-card"><h3>Total Referrals</h3><div class="number" id="totalReferrals">0</div></div>
+                <div class="stat-card"><h3>Active Referrals</h3><div class="number" id="activeReferrals">0</div></div>
+                <div class="stat-card"><h3>Rewards Given</h3><div class="number" id="rewardsGiven">UGX 0</div></div>
+            </div>
+            <div class="table-container">
+                <h3>Referral Leaderboard</h3>
+                <div id="referralLeaderboard"></div>
+            </div>
+        </div>
+        
+        <!-- Support Section -->
+        <div id="supportSection" style="display:none;">
+            <div class="table-container">
+                <h3>Support Tickets</h3>
+                <div id="supportTickets"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Modal -->
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Add Surge Zone</h3>
+            <div id="modalBody"></div>
+            <button onclick="saveModal()" class="btn btn-primary">Save</button>
+            <button onclick="closeModal()" class="btn" style="background:#999;">Cancel</button>
+        </div>
+    </div>
+    
+    <script>
+        let currentSection = 'overview';
+        let adminToken = localStorage.getItem('adminToken');
+        
+        // Check admin login
+        if (!adminToken) {
+            const password = prompt('Enter admin password:');
+            if (password === 'BodaAdmin2024!') {
+                localStorage.setItem('adminToken', 'authenticated');
+            } else {
+                alert('Wrong password');
+                location.reload();
+            }
+        }
+        
+        // API base URL
+        const API_URL = 'https://boda-boda-system.onrender.com';
+        
+        async function fetchAPI(endpoint, options = {}) {
+            const response = await fetch(`${API_URL}${endpoint}`, {
+                headers: { 'Content-Type': 'application/json' },
+                ...options
+            });
+            return response.json();
+        }
+        
+        async function loadOverview() {
+            // Load stats
+            const stats = await fetchAPI('/api/admin/stats');
+            document.getElementById('statsGrid').innerHTML = `
+                <div class="stat-card"><h3>Total Users</h3><div class="number">${stats.total_users || 0}</div></div>
+                <div class="stat-card"><h3>Active Drivers</h3><div class="number">${stats.active_drivers || 0}</div></div>
+                <div class="stat-card"><h3>Today's Rides</h3><div class="number">${stats.today_rides || 0}</div></div>
+                <div class="stat-card"><h3>Total Rides</h3><div class="number">${stats.total_rides || 0}</div></div>
+                <div class="stat-card"><h3>Revenue Today</h3><div class="number">UGX ${(stats.revenue_today || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><h3>Total Revenue</h3><div class="number">UGX ${(stats.total_revenue || 0).toLocaleString()}</div></div>
+            `;
+            
+            // Load recent rides
+            const rides = await fetchAPI('/api/admin/rides?limit=10');
+            document.getElementById('recentRidesTable').innerHTML = `
+                <table>
+                    <thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Status</th><th>Time</th></tr></thead>
+                    <tbody>
+                        ${rides.map(ride => `
+                            <tr>
+                                <td>${ride.id}</td>
+                                <td>${ride.customer_name || 'N/A'}</td>
+                                <td>${ride.driver_name || 'N/A'}</td>
+                                <td>${ride.distance_km}km</td>
+                                <td>UGX ${ride.fare?.toLocaleString()}</td>
+                                <td><span class="status-${ride.status}">${ride.status}</span></td>
+                                <td>${new Date(ride.created_at).toLocaleString()}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        async function loadDrivers() {
+            const drivers = await fetchAPI('/api/admin/drivers');
+            document.getElementById('driversTable').innerHTML = `
+                <table>
+                    <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Total Rides</th><th>Earnings</th><th>Rating</th><th>Status</th><th>Action</th></tr></thead>
+                    <tbody>
+                        ${drivers.map(driver => `
+                            <tr>
+                                <td>${driver.id}</td>
+                                <td>${driver.name}</td>
+                                <td>${driver.phone}</td>
+                                <td>${driver.total_rides}</td>
+                                <td>UGX ${driver.earnings?.toLocaleString()}</td>
+                                <td>⭐ ${driver.rating}/5</td>
+                                <td>${driver.is_online ? '🟢 Online' : '⚫ Offline'}</td>
+                                <td><button class="btn btn-danger" onclick="toggleDriver('${driver.id}')">${driver.is_approved ? 'Suspend' : 'Approve'}</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        async function loadRides() {
+            const rides = await fetchAPI('/api/admin/rides?limit=50');
+            document.getElementById('ridesTable').innerHTML = `
+                <table>
+                    <thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Status</th><th>Time</th></tr></thead>
+                    <tbody>
+                        ${rides.map(ride => `
+                            <tr>
+                                <td>${ride.id}</td>
+                                <td>${ride.customer_name || 'N/A'}</td>
+                                <td>${ride.driver_name || 'N/A'}</td>
+                                <td>${ride.distance_km}km</td>
+                                <td>UGX ${ride.fare?.toLocaleString()}</td>
+                                <td>${ride.status}</td>
+                                <td>${new Date(ride.created_at).toLocaleString()}</td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        async function loadSurgeZones() {
+            const zones = JSON.parse(localStorage.getItem('surgeZones') || '[]');
+            document.getElementById('surgeZones').innerHTML = `
+                <table>
+                    <thead><tr><th>Zone Name</th><th>Multiplier</th><th>Active</th><th>Action</th></tr></thead>
+                    <tbody>
+                        ${zones.map((zone, i) => `
+                            <tr>
+                                <td>${zone.name}</td>
+                                <td>${zone.multiplier}x</td>
+                                <td>${zone.active ? '✅ Active' : '❌ Inactive'}</td>
+                                <td><button class="btn btn-danger" onclick="deleteSurgeZone(${i})">Delete</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        function addSurgeZone() {
+            document.getElementById('modalTitle').innerHTML = 'Add Surge Zone';
+            document.getElementById('modalBody').innerHTML = `
+                <input type="text" id="zoneName" placeholder="Zone Name (e.g., Kampala CBD)">
+                <input type="number" id="zoneMultiplier" placeholder="Surge Multiplier (1.5 = 50% extra)" step="0.1">
+                <label><input type="checkbox" id="zoneActive" checked> Active</label>
+            `;
+            window.modalAction = 'addSurge';
+            document.getElementById('modal').style.display = 'flex';
+        }
+        
+        function saveModal() {
+            if (window.modalAction === 'addSurge') {
+                const zones = JSON.parse(localStorage.getItem('surgeZones') || '[]');
+                zones.push({
+                    name: document.getElementById('zoneName').value,
+                    multiplier: parseFloat(document.getElementById('zoneMultiplier').value),
+                    active: document.getElementById('zoneActive').checked
+                });
+                localStorage.setItem('surgeZones', JSON.stringify(zones));
+                loadSurgeZones();
+            }
+            closeModal();
+        }
+        
+        function deleteSurgeZone(index) {
+            const zones = JSON.parse(localStorage.getItem('surgeZones') || '[]');
+            zones.splice(index, 1);
+            localStorage.setItem('surgeZones', JSON.stringify(zones));
+            loadSurgeZones();
+        }
+        
+        async function loadReferrals() {
+            const referrals = JSON.parse(localStorage.getItem('referrals') || '[]');
+            document.getElementById('totalReferrals').innerHTML = referrals.length;
+            document.getElementById('activeReferrals').innerHTML = referrals.filter(r => r.active).length;
+            document.getElementById('rewardsGiven').innerHTML = `UGX ${referrals.reduce((sum, r) => sum + (r.reward || 0), 0).toLocaleString()}`;
+            
+            // Leaderboard
+            const userRefs = {};
+            referrals.forEach(r => {
+                userRefs[r.referred_by] = (userRefs[r.referred_by] || 0) + 1;
+            });
+            const leaderboard = Object.entries(userRefs).sort((a,b) => b[1] - a[1]).slice(0, 10);
+            
+            document.getElementById('referralLeaderboard').innerHTML = `
+                <table>
+                    <thead><tr><th>Rank</th><th>User ID</th><th>Referrals</th></tr></thead>
+                    <tbody>
+                        ${leaderboard.map(([user, count], i) => `
+                            <tr><td>${i+1}</td><td>${user}</td><td>${count}</td></tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        async function loadSupportTickets() {
+            const tickets = JSON.parse(localStorage.getItem('supportTickets') || '[]');
+            document.getElementById('supportTickets').innerHTML = `
+                <table>
+                    <thead><tr><th>ID</th><th>User</th><th>Subject</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
+                    <tbody>
+                        ${tickets.map(ticket => `
+                            <tr>
+                                <td>${ticket.id}</td>
+                                <td>${ticket.user_name || ticket.user_id}</td>
+                                <td>${ticket.subject}</td>
+                                <td><span class="status-${ticket.status}">${ticket.status}</span></td>
+                                <td>${new Date(ticket.created_at).toLocaleString()}</td>
+                                <td><button class="btn btn-primary" onclick="viewTicket('${ticket.id}')">View</button></td>
+                            </tr>
+                        `).join('')}
+                    </tbody>
+                </table>
+            `;
+        }
+        
+        function showSection(section) {
+            currentSection = section;
+            const sections = ['overview', 'drivers', 'rides', 'earnings', 'surge', 'referrals', 'support'];
+            sections.forEach(s => {
+                document.getElementById(`${s}Section`).style.display = s === section ? 'block' : 'none';
+            });
+            
+            // Update sidebar active state
+            document.querySelectorAll('.nav-item').forEach((item, i) => {
+                item.classList.toggle('active', item.innerText.toLowerCase().includes(section));
+            });
+            
+            // Load section data
+            if (section === 'overview') loadOverview();
+            if (section === 'drivers') loadDrivers();
+            if (section === 'rides') loadRides();
+            if (section === 'surge') loadSurgeZones();
+            if (section === 'referrals') loadReferrals();
+            if (section === 'support') loadSupportTickets();
+        }
+        
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+        }
+        
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            if (currentSection === 'overview') loadOverview();
+            if (currentSection === 'drivers') loadDrivers();
+            if (currentSection === 'rides') loadRides();
+        }, 30000);
+        
+        // Initial load
+        loadOverview();
+    </script>
+</body>
+</html>

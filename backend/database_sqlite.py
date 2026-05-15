@@ -33,6 +33,7 @@ def init_db():
             total_rides INTEGER DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
+                   
     ''')
     
     # Drivers table
@@ -104,6 +105,58 @@ def init_db():
             FOREIGN KEY (ride_id) REFERENCES rides(id),
             FOREIGN KEY (driver_id) REFERENCES users(id),
             FOREIGN KEY (customer_id) REFERENCES users(id)
+        )
+    ''')
+    # Add these table creations to your init_db() function
+# Find the existing tables, then add these after them:
+
+    # Wallet table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS wallets (
+            id TEXT PRIMARY KEY,
+            user_id TEXT UNIQUE NOT NULL,
+            balance INTEGER DEFAULT 0,
+            total_deposited INTEGER DEFAULT 0,
+            total_withdrawn INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    
+    # Transactions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            ride_id TEXT,
+            amount INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            method TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            reference TEXT UNIQUE NOT NULL,
+            provider_reference TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (ride_id) REFERENCES rides(id)
+        )
+    ''')
+    
+    # Payouts table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payouts (
+            id TEXT PRIMARY KEY,
+            driver_id TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            phone TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            reference TEXT UNIQUE NOT NULL,
+            processed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (driver_id) REFERENCES users(id)
         )
     ''')
     
@@ -480,3 +533,124 @@ if __name__ == "__main__":
     print("   File: boda_system.db")
     print("   Tables: users, drivers, rides, otps, ratings")
     print("   Rating System: Active")
+
+    # ============================================
+# WALLET FUNCTIONS
+# ============================================
+
+def get_or_create_wallet(user_id: str) -> dict:
+    """Get user's wallet, create if doesn't exist"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM wallets WHERE user_id = ?", (user_id,))
+    wallet = cursor.fetchone()
+    
+    if not wallet:
+        wallet_id = str(uuid.uuid4())[:8]
+        cursor.execute('''
+            INSERT INTO wallets (id, user_id, balance)
+            VALUES (?, ?, 0)
+        ''', (wallet_id, user_id))
+        conn.commit()
+        cursor.execute("SELECT * FROM wallets WHERE id = ?", (wallet_id,))
+        wallet = cursor.fetchone()
+    
+    conn.close()
+    return dict(wallet)
+
+def get_wallet_balance(user_id: str) -> int:
+    """Get user's wallet balance"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else 0
+
+def update_wallet_balance(user_id: str, amount: int, transaction_type: str = 'credit') -> bool:
+    """Update wallet balance (credit or debit)"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if transaction_type == 'credit':
+        cursor.execute('''
+            UPDATE wallets 
+            SET balance = balance + ?, total_deposited = total_deposited + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+        ''', (amount, amount, user_id))
+    else:
+        cursor.execute('''
+            UPDATE wallets 
+            SET balance = balance - ?, total_withdrawn = total_withdrawn + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND balance >= ?
+        ''', (amount, amount, user_id, amount))
+    
+    conn.commit()
+    affected = cursor.rowcount
+    conn.close()
+    return affected > 0
+
+def create_transaction(transaction_data: dict) -> dict:
+    """Record a transaction"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    transaction_id = str(uuid.uuid4())[:8]
+    cursor.execute('''
+        INSERT INTO transactions (
+            id, user_id, ride_id, amount, type, method, 
+            status, reference, provider_reference, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        transaction_id,
+        transaction_data.get('user_id'),
+        transaction_data.get('ride_id'),
+        transaction_data.get('amount'),
+        transaction_data.get('type'),
+        transaction_data.get('method'),
+        transaction_data.get('status', 'pending'),
+        transaction_data.get('reference'),
+        transaction_data.get('provider_reference'),
+        transaction_data.get('description')
+    ))
+    
+    conn.commit()
+    cursor.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
+    transaction = cursor.fetchone()
+    conn.close()
+    return dict(transaction)
+
+def update_transaction_status(reference: str, status: str, provider_reference: str = None):
+    """Update transaction status"""
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if provider_reference:
+        cursor.execute('''
+            UPDATE transactions 
+            SET status = ?, provider_reference = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE reference = ?
+        ''', (status, provider_reference, reference))
+    else:
+        cursor.execute('''
+            UPDATE transactions 
+            SET status = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE reference = ?
+        ''', (status, reference))
+    
+    conn.commit()
+    conn.close()
+
+def get_transactions(user_id: str, limit: int = 20) -> list:
+    """Get user's transaction history"""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM transactions 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC LIMIT ?
+    ''', (user_id, limit))
+    transactions = cursor.fetchall()
+    conn.close()
+    return [dict(t) for t in transactions]

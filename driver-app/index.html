@@ -64,7 +64,6 @@
         .stat-box { flex: 1; background: white; padding: 10px; border-radius: 12px; text-align: center; }
         .stat-box .number { font-size: 20px; font-weight: bold; }
         
-        /* Modal Styles */
         .modal {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.8); z-index: 10000;
@@ -75,11 +74,11 @@
             max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto;
         }
         .modal button { background: #4CAF50; color: white; border: none; padding: 12px; border-radius: 12px; cursor: pointer; width: 100%; margin-top: 10px; }
+        .modal input, .modal select { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 12px; }
         .close-btn { background: #f44336 !important; }
         .login-content { text-align: center; max-width: 350px; }
         .login-content input { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 12px; }
         
-        /* History Items */
         .history-item {
             background: #f5f5f5; padding: 15px; margin-bottom: 10px;
             border-radius: 12px; border-left: 4px solid #ff9800;
@@ -101,6 +100,42 @@
             display: inline-block;
             margin-left: 10px;
         }
+        
+        .withdrawal-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 16px;
+            margin-bottom: 15px;
+        }
+        .withdrawal-section h4 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .analytics-card {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 16px;
+            margin-bottom: 15px;
+        }
+        .analytics-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-top: 10px;
+        }
+        .analytics-item {
+            text-align: center;
+        }
+        .analytics-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .analytics-label {
+            font-size: 11px;
+            color: #666;
+        }
     </style>
 </head>
 <body>
@@ -112,13 +147,42 @@
             <small>Rides: <span id="ridesCount">0</span> <span id="ratingDisplay" class="rating-badge">⭐ 0.0</span></small>
         </div>
         
+        <!-- Driver Analytics Section -->
+        <div class="analytics-card" id="analyticsCard">
+            <h4>📊 Your Performance</h4>
+            <div class="analytics-grid" id="analyticsGrid">
+                <div class="analytics-item"><div class="analytics-value" id="analyticsRating">0.0</div><div class="analytics-label">⭐ Rating</div></div>
+                <div class="analytics-item"><div class="analytics-value" id="analyticsCompletion">0%</div><div class="analytics-label">Completion Rate</div></div>
+                <div class="analytics-item"><div class="analytics-value" id="analyticsResponse">0s</div><div class="analytics-label">Avg Response</div></div>
+                <div class="analytics-item"><div class="analytics-value" id="analyticsPeak">--</div><div class="analytics-label">Peak Hour</div></div>
+            </div>
+        </div>
+        
         <div class="stats">
             <div class="stat-box"><div class="number" id="onlineDriversCount">0</div><div class="label">Online</div></div>
             <div class="stat-box"><div class="number" id="pendingRidesCount">0</div><div class="label">Pending</div></div>
         </div>
         
+        <!-- Withdrawal Section -->
+        <div class="withdrawal-section">
+            <h4>💸 Withdraw Earnings</h4>
+            <div style="background:#e8f5e9; padding:10px; border-radius:12px; margin-bottom:15px;">
+                <div style="font-size:12px; color:#666;">Available for Withdrawal</div>
+                <div style="font-size:24px; font-weight:bold; color:#4CAF50;" id="availableBalance">UGX 0</div>
+            </div>
+            <select id="withdrawMethod">
+                <option value="mtn">📱 MTN Mobile Money</option>
+                <option value="airtel">📱 Airtel Money</option>
+            </select>
+            <input type="tel" id="withdrawPhone" placeholder="Mobile Money Number">
+            <input type="number" id="withdrawAmount" placeholder="Amount to Withdraw">
+            <button onclick="requestWithdrawal()" style="background:#ff9800; margin-top:5px;">💸 Request Withdrawal</button>
+        </div>
+        
         <div style="display:flex; gap:10px; margin-bottom:15px;">
             <button onclick="showHistoryModal()" style="flex:1; background:#9C27B0; padding:12px; border-radius:12px; border:none; color:white; cursor:pointer;">📜 Ride History</button>
+            <button onclick="showTransactionModal()" style="flex:1; background:#2196F3; padding:12px; border-radius:12px; border:none; color:white; cursor:pointer;">💰 Transactions</button>
+            <button onclick="openSupportChat()" style="flex:1; background:#4CAF50; padding:12px; border-radius:12px; border:none; color:white; cursor:pointer;">💬 Support</button>
         </div>
         
         <div class="status-toggle">
@@ -166,6 +230,28 @@
         </div>
     </div>
     
+    <!-- Transaction Modal -->
+    <div id="transactionModal" class="modal" style="display:none;">
+        <div class="modal-content">
+            <h3>💰 Transaction History</h3>
+            <div id="transactionList" style="max-height:400px; overflow-y:auto;"></div>
+            <button class="close-btn" onclick="closeTransactionModal()">Close</button>
+        </div>
+    </div>
+    
+    <!-- Support Chat Modal -->
+    <div id="supportModal" class="modal" style="display:none;">
+        <div class="modal-content" style="height:500px; display:flex; flex-direction:column;">
+            <h3>💬 Support Chat</h3>
+            <div id="supportMessages" style="flex:1; overflow-y:auto; background:#f5f5f5; border-radius:12px; padding:15px; margin:10px 0;"></div>
+            <div style="display:flex; gap:10px;">
+                <input type="text" id="supportInput" placeholder="Type your message..." style="flex:1;">
+                <button onclick="sendSupportMessage()" style="width:auto;">Send</button>
+            </div>
+            <button class="close-btn" onclick="closeSupportChat()">Close</button>
+        </div>
+    </div>
+    
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
     <script>
@@ -178,6 +264,8 @@
         let routingControl = null;
         let currentPhone = '';
         let driverRating = 0;
+        let driverWalletBalance = 0;
+        let supportWs = null;
         
         // Ride History array
         let rideHistory = [];
@@ -225,7 +313,7 @@
                     localStorage.setItem('driverId', currentUser.id);
                     loadHistoryFromStorage();
                     showLoginStatus('Login successful!', 'success');
-                    await loadDriverRating();
+                    loadDriverData();
                     setTimeout(() => {
                         document.getElementById('loginModal').style.display = 'none';
                         document.getElementById('mainPanel').style.display = 'block';
@@ -239,6 +327,13 @@
             }
         }
         
+        async function loadDriverData() {
+            await loadDriverRating();
+            await loadWalletBalance();
+            await loadTransactions();
+            await loadDriverAnalytics();
+        }
+        
         async function loadDriverRating() {
             try {
                 const response = await fetch(`https://boda-boda-system.onrender.com/api/driver/rating/${currentUser.id}`);
@@ -250,6 +345,170 @@
             } catch (error) {
                 console.log('Could not load rating');
             }
+        }
+        
+        async function loadDriverAnalytics() {
+            try {
+                const response = await fetch(`https://boda-boda-system.onrender.com/api/driver/analytics/${currentUser.id}`);
+                const data = await response.json();
+                if (data.success && data.analytics) {
+                    document.getElementById('analyticsRating').innerHTML = data.analytics.avg_rating.toFixed(1);
+                    document.getElementById('analyticsCompletion').innerHTML = data.analytics.completion_rate + '%';
+                    document.getElementById('analyticsResponse').innerHTML = data.analytics.avg_response_time + 's';
+                    document.getElementById('analyticsPeak').innerHTML = data.analytics.peak_hour + ':00';
+                }
+            } catch (error) {
+                console.log('Could not load analytics');
+            }
+        }
+        
+        async function loadWalletBalance() {
+            try {
+                const response = await fetch(`https://boda-boda-system.onrender.com/api/wallet/${currentUser.id}`);
+                const data = await response.json();
+                if (data.success) {
+                    driverWalletBalance = data.balance;
+                    document.getElementById('availableBalance').innerHTML = formatUGX(driverWalletBalance);
+                }
+            } catch (error) {
+                console.log('Could not load wallet');
+            }
+        }
+        
+        async function loadTransactions() {
+            try {
+                const response = await fetch(`https://boda-boda-system.onrender.com/api/transactions/${currentUser.id}`);
+                const data = await response.json();
+                if (data.transactions) {
+                    window.driverTransactions = data.transactions;
+                }
+            } catch (error) {
+                console.log('Could not load transactions');
+            }
+        }
+        
+        async function requestWithdrawal() {
+            const method = document.getElementById('withdrawMethod').value;
+            const phone = document.getElementById('withdrawPhone').value;
+            const amount = parseInt(document.getElementById('withdrawAmount').value);
+            
+            if (!amount || amount < 10000) {
+                showNotification('Minimum withdrawal is UGX 10,000', 'error');
+                return;
+            }
+            if (amount > driverWalletBalance) {
+                showNotification('Insufficient balance', 'error');
+                return;
+            }
+            if (!phone) {
+                showNotification('Enter mobile money number', 'error');
+                return;
+            }
+            
+            showNotification('Processing withdrawal request...', 'info');
+            
+            try {
+                const response = await fetch('https://boda-boda-system.onrender.com/api/driver/withdraw', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        driver_id: currentUser.id,
+                        amount: amount,
+                        method: method,
+                        phone: phone
+                    })
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    showNotification(`Withdrawal request submitted for ${formatUGX(amount)}`, 'success');
+                    document.getElementById('withdrawAmount').value = '';
+                    document.getElementById('withdrawPhone').value = '';
+                    await loadWalletBalance();
+                    await loadTransactions();
+                    
+                    if (data.new_balance !== undefined) {
+                        driverWalletBalance = data.new_balance;
+                    }
+                } else {
+                    showNotification(data.message || 'Withdrawal failed', 'error');
+                }
+            } catch (error) {
+                showNotification('Connection error', 'error');
+            }
+        }
+        
+        function showTransactionModal() {
+            const modal = document.getElementById('transactionModal');
+            const txList = document.getElementById('transactionList');
+            
+            const transactions = window.driverTransactions || [];
+            
+            if (transactions.length === 0) {
+                txList.innerHTML = '<div style="text-align:center; padding:40px; color:#999;">No transactions yet</div>';
+            } else {
+                txList.innerHTML = transactions.map(tx => `
+                    <div style="padding:12px; border-bottom:1px solid #eee;">
+                        <div style="display:flex; justify-content:space-between;">
+                            <span>${tx.type === 'deposit' ? '➕ Deposit' : tx.type === 'withdrawal' ? '💸 Withdrawal' : '➖ Payment'}</span>
+                            <span style="color:${tx.type === 'deposit' ? '#4CAF50' : '#f44336'}">${formatUGX(tx.amount)}</span>
+                        </div>
+                        <div style="font-size:11px; color:#999; margin-top:5px;">
+                            ${tx.method} • ${tx.status} • ${new Date(tx.created_at).toLocaleString()}
+                        </div>
+                        ${tx.description ? `<div style="font-size:11px; color:#666; margin-top:3px;">${tx.description}</div>` : ''}
+                    </div>
+                `).join('');
+            }
+            modal.style.display = 'flex';
+        }
+        
+        function closeTransactionModal() {
+            document.getElementById('transactionModal').style.display = 'none';
+        }
+        
+        // ============ SUPPORT CHAT ============
+        function openSupportChat() {
+            document.getElementById('supportModal').style.display = 'flex';
+            
+            if (!supportWs) {
+                supportWs = new WebSocket(`wss://boda-boda-system.onrender.com/ws/support/${currentUser.id}`);
+                supportWs.onmessage = (e) => {
+                    const data = JSON.parse(e.data);
+                    addSupportMessage(data.message, data.from_admin, data.timestamp);
+                };
+            }
+        }
+        
+        function closeSupportChat() {
+            document.getElementById('supportModal').style.display = 'none';
+        }
+        
+        function addSupportMessage(message, fromAdmin, timestamp) {
+            const container = document.getElementById('supportMessages');
+            const isAdmin = fromAdmin;
+            container.innerHTML += `
+                <div style="margin:5px 0; text-align:${isAdmin ? 'left' : 'right'}">
+                    <div style="display:inline-block; background:${isAdmin ? '#4CAF50' : '#ddd'}; color:${isAdmin ? 'white' : 'black'}; padding:10px 15px; border-radius:18px; max-width:80%;">
+                        <div>${message}</div>
+                        <div style="font-size:10px; opacity:0.7;">${new Date(timestamp).toLocaleTimeString()}</div>
+                    </div>
+                </div>
+            `;
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        function sendSupportMessage() {
+            const input = document.getElementById('supportInput');
+            if (!input.value.trim() || !supportWs) return;
+            
+            supportWs.send(JSON.stringify({
+                type: 'message',
+                message: input.value
+            }));
+            
+            addSupportMessage(input.value, false, new Date().toISOString());
+            input.value = '';
         }
         
         function resetLogin() {
@@ -272,7 +531,7 @@
                 document.getElementById('mainPanel').style.display = 'block';
                 currentUser = { id: driverId };
                 loadHistoryFromStorage();
-                loadDriverRating();
+                loadDriverData();
                 startDriverApp();
             }
         }
@@ -499,11 +758,9 @@
         
         function completeRide() {
             if (ws && ws.readyState === WebSocket.OPEN && currentRideId) {
-                // Save to history before completing
-                const destination = document.getElementById('activeRideInfo')?.innerText || 'Destination';
                 saveToHistory({
                     pickup: `${currentPickupLat.toFixed(4)}, ${currentPickupLng.toFixed(4)}`,
-                    destination: destination,
+                    destination: 'Ride completed',
                     fare: currentRideFare,
                     distance: currentRideDistance.toFixed(1),
                     customerName: 'Customer'
@@ -521,6 +778,11 @@
                 localStorage.setItem('driverEarnings', JSON.stringify({ earnings, rides: ridesCompleted }));
                 document.getElementById('earningsAmount').textContent = formatUGX(earnings);
                 document.getElementById('ridesCount').textContent = ridesCompleted;
+                
+                // Use .then() instead of await for non-async function
+                loadWalletBalance().then(() => {
+                    loadDriverAnalytics();
+                });
                 
                 showNotification(`Ride complete! Earned ${formatUGX(currentRideFare)}`, 'success');
                 
@@ -596,5 +858,3 @@
     </script>
 </body>
 </html>
-
-
