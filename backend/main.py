@@ -804,6 +804,7 @@ async def process_ride_payment(request: dict):
     reference = f"PAYMENT_{ride_id}_{int(datetime.now().timestamp())}"
     
     if method == 'wallet':
+        # Wallet payment - deduct from customer wallet
         balance = await get_wallet_balance(user_id)
         if balance < amount:
             return {"success": False, "message": f"Insufficient wallet balance. Available: UGX {balance}"}
@@ -817,12 +818,13 @@ async def process_ride_payment(request: dict):
             'method': 'wallet',
             'status': 'completed',
             'reference': reference,
-            'description': f'Payment for ride {ride_id}'
+            'description': f'Payment for ride {ride_id} from wallet'
         })
         
         return {"success": True, "message": f"Payment of UGX {amount} completed from wallet", "reference": reference}
     
     elif method == 'cash':
+        # CASH PAYMENT - NO wallet changes, just record the transaction
         await create_transaction({
             'user_id': user_id,
             'ride_id': ride_id,
@@ -831,11 +833,12 @@ async def process_ride_payment(request: dict):
             'method': 'cash',
             'status': 'completed',
             'reference': reference,
-            'description': f'Cash payment for ride {ride_id}'
+            'description': f'Cash payment for ride {ride_id} - paid directly to driver'
         })
-        return {"success": True, "message": "Cash payment recorded", "reference": reference}
+        return {"success": True, "message": "Cash payment recorded. Please pay driver directly.", "reference": reference}
     
     elif method in ['mtn', 'airtel']:
+        # Mobile money payment - no wallet changes (external payment)
         if not phone:
             return {"success": False, "message": "Phone number required for mobile money"}
         
