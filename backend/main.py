@@ -1,10 +1,5 @@
 """
-MAIN BACKEND SERVER - COMPLETE FIXED VERSION
-- Fixed WebSocket disconnections
-- Fixed rating calculation
-- Fixed "No drivers nearby" bug
-- Added driver distance display
-- 50km search radius
+MAIN BACKEND SERVER - COMPLETE WITH PAYMENTS
 """
 
 import json
@@ -14,7 +9,7 @@ import os
 import asyncio
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
@@ -36,6 +31,7 @@ def init_db():
     conn = get_db()
     cursor = conn.cursor()
     
+    # Users table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY,
@@ -49,6 +45,7 @@ def init_db():
         )
     ''')
     
+    # Drivers table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS drivers (
             id TEXT PRIMARY KEY,
@@ -68,6 +65,7 @@ def init_db():
         )
     ''')
     
+    # Rides table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS rides (
             id TEXT PRIMARY KEY,
@@ -92,6 +90,7 @@ def init_db():
         )
     ''')
     
+    # OTP table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS otps (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -102,6 +101,7 @@ def init_db():
         )
     ''')
     
+    # Ratings table
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS ratings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -111,6 +111,58 @@ def init_db():
             rating INTEGER,
             comment TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+    
+    # ============ PAYMENT TABLES ============
+    
+    # Wallet table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS wallets (
+            id TEXT PRIMARY KEY,
+            user_id TEXT UNIQUE NOT NULL,
+            balance INTEGER DEFAULT 0,
+            total_deposited INTEGER DEFAULT 0,
+            total_withdrawn INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    
+    # Transactions table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS transactions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            ride_id TEXT,
+            amount INTEGER NOT NULL,
+            type TEXT NOT NULL,
+            method TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            reference TEXT UNIQUE NOT NULL,
+            provider_reference TEXT,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            completed_at TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (ride_id) REFERENCES rides(id)
+        )
+    ''')
+    
+    # Payouts table
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payouts (
+            id TEXT PRIMARY KEY,
+            driver_id TEXT NOT NULL,
+            amount INTEGER NOT NULL,
+            phone TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            status TEXT DEFAULT 'pending',
+            reference TEXT UNIQUE NOT NULL,
+            processed_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (driver_id) REFERENCES users(id)
         )
     ''')
     
@@ -252,6 +304,145 @@ def save_ride(ride_data: dict):
     print(f"💾 Ride {ride_id} saved")
 
 # ============================================
+# WALLET FUNCTIONS
+# ============================================
+
+def get_or_create_wallet(user_id: str) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT * FROM wallets WHERE user_id = ?", (user_id,))
+    wallet = cursor.fetchone()
+    
+    if not wallet:
+        wallet_id = str(uuid.uuid4())[:8]
+        cursor.execute('''
+            INSERT INTO wallets (id, user_id, balance)
+            VALUES (?, ?, 0)
+        ''', (wallet_id, user_id))
+        conn.commit()
+        cursor.execute("SELECT * FROM wallets WHERE id = ?", (wallet_id,))
+        wallet = cursor.fetchone()
+    
+    conn.close()
+    return dict(wallet)
+
+def get_wallet_balance(user_id: str) -> int:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("SELECT balance FROM wallets WHERE user_id = ?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else 0
+
+def update_wallet_balance(user_id: str, amount: int, transaction_type: str = 'credit') -> bool:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if transaction_type == 'credit':
+        cursor.execute('''
+            UPDATE wallets 
+            SET balance = balance + ?, total_deposited = total_deposited + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ?
+        ''', (amount, amount, user_id))
+    else:
+        cursor.execute('''
+            UPDATE wallets 
+            SET balance = balance - ?, total_withdrawn = total_withdrawn + ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND balance >= ?
+        ''', (amount, amount, user_id, amount))
+    
+    conn.commit()
+    affected = cursor.rowcount
+    conn.close()
+    return affected > 0
+
+def create_transaction(transaction_data: dict) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    transaction_id = str(uuid.uuid4())[:8]
+    cursor.execute('''
+        INSERT INTO transactions (
+            id, user_id, ride_id, amount, type, method, 
+            status, reference, provider_reference, description
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        transaction_id,
+        transaction_data.get('user_id'),
+        transaction_data.get('ride_id'),
+        transaction_data.get('amount'),
+        transaction_data.get('type'),
+        transaction_data.get('method'),
+        transaction_data.get('status', 'pending'),
+        transaction_data.get('reference'),
+        transaction_data.get('provider_reference'),
+        transaction_data.get('description')
+    ))
+    
+    conn.commit()
+    cursor.execute("SELECT * FROM transactions WHERE id = ?", (transaction_id,))
+    transaction = cursor.fetchone()
+    conn.close()
+    return dict(transaction)
+
+def update_transaction_status(reference: str, status: str, provider_reference: str = None):
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    if provider_reference:
+        cursor.execute('''
+            UPDATE transactions 
+            SET status = ?, provider_reference = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE reference = ?
+        ''', (status, provider_reference, reference))
+    else:
+        cursor.execute('''
+            UPDATE transactions 
+            SET status = ?, completed_at = CURRENT_TIMESTAMP
+            WHERE reference = ?
+        ''', (status, reference))
+    
+    conn.commit()
+    conn.close()
+
+def get_transactions(user_id: str, limit: int = 50) -> list:
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM transactions 
+        WHERE user_id = ? 
+        ORDER BY created_at DESC LIMIT ?
+    ''', (user_id, limit))
+    transactions = cursor.fetchall()
+    conn.close()
+    return [dict(t) for t in transactions]
+
+def create_payout(payout_data: dict) -> dict:
+    conn = get_db()
+    cursor = conn.cursor()
+    
+    payout_id = str(uuid.uuid4())[:8]
+    cursor.execute('''
+        INSERT INTO payouts (id, driver_id, amount, phone, provider, status, reference)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        payout_id,
+        payout_data.get('driver_id'),
+        payout_data.get('amount'),
+        payout_data.get('phone'),
+        payout_data.get('provider'),
+        'pending',
+        payout_data.get('reference')
+    ))
+    
+    conn.commit()
+    cursor.execute("SELECT * FROM payouts WHERE id = ?", (payout_id,))
+    payout = cursor.fetchone()
+    conn.close()
+    return dict(payout)
+
+# ============================================
 # FARE CALCULATION
 # ============================================
 
@@ -318,30 +509,26 @@ class ConnectionManager:
     async def connect(self, user_id: str, websocket: WebSocket):
         await websocket.accept()
         self.active_connections[user_id] = websocket
-        print(f"✅ {user_id} connected - Total: {len(self.active_connections)}")
+        print(f"✅ {user_id} connected")
     
     def disconnect(self, user_id: str):
         if user_id in self.active_connections:
             del self.active_connections[user_id]
-            print(f"❌ {user_id} disconnected - Total: {len(self.active_connections)}")
+            print(f"❌ {user_id} disconnected")
     
     async def send(self, user_id: str, message: dict):
         if user_id in self.active_connections:
             try:
                 await self.active_connections[user_id].send_json(message)
-                print(f"📤 Sent to {user_id}: {message.get('type')}")
                 return True
-            except Exception as e:
-                print(f"💥 Error sending to {user_id}: {e}")
+            except:
                 self.disconnect(user_id)
-        else:
-            print(f"⚠️ Cannot send to {user_id} - not connected")
         return False
 
 manager = ConnectionManager()
 
 # ============================================
-# API ENDPOINTS
+# AUTHENTICATION ENDPOINTS
 # ============================================
 
 @app.post("/api/send-otp")
@@ -367,6 +554,10 @@ async def verify_otp_endpoint(request: dict):
             display_name = name if name else f"User_{phone[-4:]}"
             user = create_user(phone, display_name, role)
         verify_user(phone, True)
+        
+        # Create wallet for user if not exists
+        get_or_create_wallet(user['id'])
+        
         return {
             "success": True,
             "user": {
@@ -385,15 +576,213 @@ async def get_driver_rating_endpoint(driver_id: str):
     rating = get_driver_rating(driver_id)
     return {"success": True, "rating": rating['rating'], "total_rides": rating['total_rides']}
 
+# ============================================
+# PAYMENT ENDPOINTS
+# ============================================
+
+@app.get("/api/wallet/{user_id}")
+async def get_wallet(user_id: str):
+    """Get user's wallet balance"""
+    wallet = get_or_create_wallet(user_id)
+    return {
+        "success": True,
+        "balance": wallet['balance'],
+        "total_deposited": wallet['total_deposited'],
+        "total_withdrawn": wallet['total_withdrawn']
+    }
+
+@app.post("/api/wallet/deposit")
+async def deposit_to_wallet(request: dict):
+    """Deposit money to wallet via mobile money"""
+    user_id = request.get('user_id')
+    amount = request.get('amount')
+    method = request.get('method', 'mtn')
+    phone = request.get('phone')
+    
+    if not user_id or not amount or not phone:
+        return {"success": False, "message": "Missing required fields"}
+    
+    if amount < 5000:
+        return {"success": False, "message": "Minimum deposit is UGX 5,000"}
+    
+    reference = f"DEPOSIT_{user_id}_{int(datetime.now().timestamp())}"
+    
+    # Create transaction record
+    transaction = create_transaction({
+        'user_id': user_id,
+        'amount': amount,
+        'type': 'deposit',
+        'method': method,
+        'status': 'pending',
+        'reference': reference,
+        'description': f'Deposit of UGX {amount} via {method.upper()}'
+    })
+    
+    # For production, integrate with MTN/Airtel API here
+    # For now, simulate successful deposit
+    update_transaction_status(reference, 'completed')
+    update_wallet_balance(user_id, amount, 'credit')
+    
+    return {
+        "success": True,
+        "message": f"Successfully deposited UGX {amount}",
+        "reference": reference
+    }
+
+@app.post("/api/payments/process-ride")
+async def process_ride_payment(request: dict):
+    """Process payment for a completed ride"""
+    user_id = request.get('user_id')
+    ride_id = request.get('ride_id')
+    amount = request.get('amount')
+    method = request.get('method', 'wallet')
+    phone = request.get('phone')
+    
+    if not user_id or not ride_id or not amount:
+        return {"success": False, "message": "Missing required fields"}
+    
+    reference = f"PAYMENT_{ride_id}_{int(datetime.now().timestamp())}"
+    
+    if method == 'wallet':
+        balance = get_wallet_balance(user_id)
+        if balance < amount:
+            return {"success": False, "message": f"Insufficient wallet balance. Available: UGX {balance}"}
+        
+        update_wallet_balance(user_id, amount, 'debit')
+        create_transaction({
+            'user_id': user_id,
+            'ride_id': ride_id,
+            'amount': amount,
+            'type': 'payment',
+            'method': 'wallet',
+            'status': 'completed',
+            'reference': reference,
+            'description': f'Payment for ride {ride_id}'
+        })
+        
+        return {
+            "success": True,
+            "message": f"Payment of UGX {amount} completed from wallet",
+            "reference": reference
+        }
+    
+    elif method == 'cash':
+        create_transaction({
+            'user_id': user_id,
+            'ride_id': ride_id,
+            'amount': amount,
+            'type': 'payment',
+            'method': 'cash',
+            'status': 'completed',
+            'reference': reference,
+            'description': f'Cash payment for ride {ride_id}'
+        })
+        
+        return {
+            "success": True,
+            "message": "Cash payment recorded",
+            "reference": reference
+        }
+    
+    elif method in ['mtn', 'airtel']:
+        if not phone:
+            return {"success": False, "message": "Phone number required for mobile money"}
+        
+        create_transaction({
+            'user_id': user_id,
+            'ride_id': ride_id,
+            'amount': amount,
+            'type': 'payment',
+            'method': method,
+            'status': 'pending',
+            'reference': reference,
+            'description': f'Payment for ride {ride_id} via {method.upper()}'
+        })
+        
+        # For production, integrate with MTN/Airtel API here
+        # Simulate successful payment
+        update_transaction_status(reference, 'completed')
+        
+        return {
+            "success": True,
+            "message": f"Payment initiated via {method.upper()}. Check your phone to complete.",
+            "reference": reference
+        }
+    
+    else:
+        return {"success": False, "message": f"Unknown payment method: {method}"}
+
+@app.get("/api/transactions/{user_id}")
+async def get_user_transactions(user_id: str):
+    """Get user's transaction history"""
+    transactions = get_transactions(user_id)
+    return {"success": True, "transactions": transactions}
+
+@app.post("/api/driver/withdraw")
+async def driver_withdrawal(request: dict):
+    """Driver requests withdrawal to mobile money"""
+    driver_id = request.get('driver_id')
+    amount = request.get('amount')
+    method = request.get('method')
+    phone = request.get('phone')
+    
+    if not driver_id or not amount or not method or not phone:
+        return {"success": False, "message": "Missing required fields"}
+    
+    if amount < 10000:
+        return {"success": False, "message": "Minimum withdrawal is UGX 10,000"}
+    
+    balance = get_wallet_balance(driver_id)
+    if balance < amount:
+        return {"success": False, "message": f"Insufficient balance. Available: UGX {balance}"}
+    
+    reference = f"WD_{driver_id}_{int(datetime.now().timestamp())}"
+    
+    # Deduct from wallet
+    update_wallet_balance(driver_id, amount, 'debit')
+    
+    # Create withdrawal transaction
+    create_transaction({
+        'user_id': driver_id,
+        'amount': amount,
+        'type': 'withdrawal',
+        'method': method,
+        'status': 'pending',
+        'reference': reference,
+        'description': f'Withdrawal request to {method.upper()} {phone}'
+    })
+    
+    # Create payout record
+    create_payout({
+        'driver_id': driver_id,
+        'amount': amount,
+        'phone': phone,
+        'provider': method,
+        'reference': reference
+    })
+    
+    new_balance = get_wallet_balance(driver_id)
+    
+    return {
+        "success": True,
+        "message": f"Withdrawal request for UGX {amount} submitted. Funds will be sent to {method.upper()} {phone}",
+        "reference": reference,
+        "new_balance": new_balance
+    }
+
 @app.get("/")
 async def root():
     return {
         "status": "running",
         "server": "Boda Boda System",
-        "version": "1.0.0",
+        "version": "2.0.0",
         "online_drivers": len(online_drivers),
         "active_connections": len(manager.active_connections)
     }
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 # ============================================
 # WEBSOCKET ENDPOINTS
@@ -413,12 +802,9 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 driver_locations[driver_id] = {'lat': data['lat'], 'lng': data['lng']}
                 if data.get('status') == 'online':
                     online_drivers.add(driver_id)
-                    print(f"📍 Driver {driver_id[:8]} ONLINE at ({data['lat']:.4f}, {data['lng']:.4f})")
                 else:
                     online_drivers.discard(driver_id)
-                    print(f"📍 Driver {driver_id[:8]} OFFLINE")
                 
-                # Send location to customer if on active ride
                 for ride_id, ride in active_rides.items():
                     if ride['driver_id'] == driver_id:
                         await manager.send(ride['customer_id'], {
@@ -429,8 +815,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
             
             elif msg_type == 'accept_ride':
                 ride_id = data['ride_id']
-                print(f"🎯 Driver {driver_id[:8]} accepting ride {ride_id}")
-                
                 if ride_id in pending_rides:
                     ride = pending_rides[ride_id]
                     customer_id = ride['customer_id']
@@ -444,18 +828,15 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'fare': fare
                     }
                     
-                    # Send to customer
                     await manager.send(customer_id, {
                         'type': 'driver_assigned',
                         'driver_id': driver_id,
                         'ride_id': ride_id,
                         'fare': fare,
                         'distance_km': distance,
-                        'driver_distance_km': ride.get('driver_distance_km', 0),
                         'driver_location': driver_locations.get(driver_id, {'lat': 0, 'lng': 0})
                     })
                     
-                    # Confirm to driver
                     await websocket.send_json({
                         'type': 'ride_accepted',
                         'fare': fare,
@@ -465,8 +846,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     
                     del pending_rides[ride_id]
                     print(f"✅ Ride {ride_id} accepted")
-                else:
-                    print(f"⚠️ Ride {ride_id} not found")
             
             elif msg_type == 'ride_started':
                 ride_id = data['ride_id']
@@ -496,6 +875,9 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'completed_at': datetime.now().isoformat()
                     }
                     save_ride(ride_data)
+                    
+                    # Credit driver's wallet for the ride
+                    update_wallet_balance(driver_id, fare, 'credit')
                     
                     await manager.send(customer_id, {
                         'type': 'ride_completed',
@@ -547,27 +929,20 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                     )
                 
                 fare = calculate_fare(distance_km)
-                print(f"🚲 New ride request {ride_id} - Distance: {distance_km}km, Fare: UGX {fare:,}")
                 
-                # Find nearest driver within 50km
                 MAX_SEARCH_RADIUS_KM = 50
                 nearest = None
                 min_dist = float('inf')
-                
-                print(f"🔍 Searching among {len(online_drivers)} online drivers...")
                 
                 for driver_id in online_drivers:
                     loc = driver_locations.get(driver_id)
                     if loc:
                         dist = calculate_distance(data['pickup_lat'], data['pickup_lng'], loc['lat'], loc['lng'])
-                        print(f"   Driver {driver_id[:8]} is {dist:.2f}km away")
                         if dist < min_dist and dist <= MAX_SEARCH_RADIUS_KM:
                             min_dist = dist
                             nearest = driver_id
                 
                 if nearest:
-                    print(f"✅ Found driver {nearest[:8]} - Distance: {min_dist:.2f}km")
-                    
                     pending_rides[ride_id] = {
                         'customer_id': customer_id,
                         'driver_id': nearest,
@@ -578,11 +953,9 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'dest_lat': data.get('dest_lat', 0),
                         'dest_lng': data.get('dest_lng', 0),
                         'distance_km': distance_km,
-                        'fare': fare,
-                        'driver_distance_km': round(min_dist, 1)
+                        'fare': fare
                     }
                     
-                    # Send to driver
                     await manager.send(nearest, {
                         'type': 'new_ride_request',
                         'ride_id': ride_id,
@@ -596,7 +969,6 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'fare': fare
                     })
                     
-                    # Send searching message to customer
                     await websocket.send_json({
                         'type': 'searching_for_driver',
                         'ride_id': ride_id,
@@ -606,9 +978,7 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'message': f'Searching for driver... Nearest driver is {round(min_dist, 1)}km away'
                     })
                     print(f"   → Searching for driver within {round(min_dist, 1)}km")
-                    
                 else:
-                    print(f"❌ No drivers found within {MAX_SEARCH_RADIUS_KM}km")
                     await websocket.send_json({
                         'type': 'no_drivers',
                         'message': f'No drivers within {MAX_SEARCH_RADIUS_KM}km. Please try again.'
@@ -651,8 +1021,7 @@ if __name__ == "__main__":
     print("🚀 BODA BODA SYSTEM - UGANDA")
     print("=" * 50)
     print(f"📡 Server running on port {port}")
-    print("📍 Driver search radius: 50km")
-    print("⭐ Rating system: Active")
+    print("💰 Payment system enabled")
     print("=" * 50 + "\n")
     
     uvicorn.run(app, host="0.0.0.0", port=port)
