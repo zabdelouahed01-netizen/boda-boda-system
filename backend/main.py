@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (FULLY FIXED WITH CASH PAYMENT HANDLING)
+MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (COMPLETE FIXED)
 """
 
 import json
@@ -993,12 +993,14 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     customer_id = ride['customer_id']
                     distance = ride.get('distance_km', 2)
                     fare = ride.get('fare', calculate_fare(distance))
+                    payment_method = ride.get('payment_method', 'wallet')
                     
                     active_rides[ride_id] = {
                         'driver_id': driver_id,
                         'customer_id': customer_id,
                         'distance_km': distance,
-                        'fare': fare
+                        'fare': fare,
+                        'payment_method': payment_method
                     }
                     
                     await manager.send(customer_id, {
@@ -1075,6 +1077,7 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                         'distance_km': distance,
                         'ride_id': ride_id,
                         'driver_id': driver_id,
+                        'payment_method': payment_method,
                         'message': f'Ride complete! Total: UGX {fare:,}'
                     })
                     
@@ -1113,6 +1116,7 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                     )
                 
                 fare = calculate_fare(distance_km, data['pickup_lat'], data['pickup_lng'])
+                payment_method = data.get('payment_method', 'wallet')
                 
                 MAX_SEARCH_RADIUS_KM = 50
                 nearest = None
@@ -1137,7 +1141,8 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'dest_lat': data.get('dest_lat', 0),
                         'dest_lng': data.get('dest_lng', 0),
                         'distance_km': distance_km,
-                        'fare': fare
+                        'fare': fare,
+                        'payment_method': payment_method
                     }
                     
                     await manager.send(nearest, {
@@ -1150,7 +1155,8 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                         'dest_lat': data.get('dest_lat', 0),
                         'dest_lng': data.get('dest_lng', 0),
                         'distance_km': distance_km,
-                        'fare': fare
+                        'fare': fare,
+                        'payment_method': payment_method
                     })
                     
                     await websocket.send_json({
@@ -1217,7 +1223,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 60)
-    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (CASH PAYMENT FIXED)")
+    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FULLY FIXED)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
     print("💰 Payment system: Active (Cash payments do NOT affect wallet)")
