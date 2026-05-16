@@ -14,12 +14,45 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import uvicorn
-from sms_service import send_otp_sms
 
 # ============================================
 # DATABASE SETUP - POSTGRESQL
 # ============================================
+# ============ SMS FUNCTION ============
+import requests
 
+def send_otp_sms(phone: str, otp: str) -> dict:
+    """Send OTP via SMS using Africa's Talking"""
+    # Format phone number
+    phone = phone.replace(" ", "").replace("-", "").replace("+", "")
+    if phone.startswith("0"):
+        phone = "256" + phone[1:]
+    
+    message = f"Your Boda Boda verification code is: {otp}"
+    
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "apiKey": "atsk_fe1c0dcda0ed58eb254db24e1d05026faaf0a34c73148e748d6e8e8381a1d575fc556ea2",
+    }
+    
+    data = {
+        "username": "sandbox",
+        "to": phone,
+        "message": message
+    }
+    
+    try:
+        response = requests.post("http://api.sandbox.africastalking.com/version1/messaging", headers=headers, data=data, timeout=30)
+        if response.status_code == 201:
+            result = response.json()
+            if 'Sent' in result.get('SMSMessageData', {}).get('Message', ''):
+                print(f"✅ OTP SMS sent to {phone}")
+                return {"success": True, "message": "OTP sent"}
+        return {"success": False, "message": "SMS failed"}
+    except Exception as e:
+        print(f"❌ SMS error: {e}")
+        return {"success": False, "message": str(e)}
 import asyncpg
 
 DB_POOL = None
@@ -686,34 +719,7 @@ manager = ConnectionManager()
 # AUTHENTICATION ENDPOINTS
 # ============================================
 
-@app.post("/api/send-otp")
-async def send_otp_endpoint(request: dict):
-    phone = request.get('phone')
-    print(f"📱 Send OTP request for: {phone}")
-    
-    if not phone:
-        return {"success": False, "message": "Phone number required"}
-    
-    # Generate OTP
-    otp_code = await generate_otp(phone)
-    
-    # Try to send SMS
-    sms_result = send_otp_sms(phone, otp_code)
-    
-    if sms_result["success"]:
-        return {
-            "success": True,
-            "message": "OTP sent via SMS",
-            "otp": otp_code
-        }
-    else:
-        # Fallback to logs
-        print(f"⚠️ SMS failed, OTP: {otp_code}")
-        return {
-            "success": True,
-            "message": "OTP sent (check logs)",
-            "otp": otp_code
-        }
+
 
 
 @app.post("/api/verify-otp")
