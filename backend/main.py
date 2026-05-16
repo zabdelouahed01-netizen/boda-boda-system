@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (COMPLETE FIXED)
+MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (FULLY FIXED WITH WALLET VALIDATION)
 """
 
 import json
@@ -1041,6 +1041,21 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 if ride_id in active_rides:
                     customer_id = active_rides[ride_id]['customer_id']
                     
+                    # For wallet payments, verify balance again
+                    if payment_method == 'wallet':
+                        customer_balance = await get_wallet_balance(customer_id)
+                        if customer_balance < fare:
+                            await websocket.send_json({
+                                'type': 'payment_error',
+                                'message': f'Insufficient wallet balance'
+                            })
+                            await manager.send(customer_id, {
+                                'type': 'payment_error',
+                                'message': f'Insufficient wallet balance. Please add funds.'
+                            })
+                            del active_rides[ride_id]
+                            return
+                    
                     ride_data = {
                         'id': ride_id,
                         'customer_id': customer_id,
@@ -1054,8 +1069,9 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     }
                     await save_ride(ride_data)
                     
-                    # ONLY credit driver wallet for NON-CASH payments
-                    if payment_method != 'cash':
+                    # Process payment based on method
+                    if payment_method == 'wallet':
+                        await update_wallet_balance(customer_id, fare, 'debit')
                         await update_wallet_balance(driver_id, fare, 'credit')
                         await websocket.send_json({
                             'type': 'ride_completed_confirmation',
@@ -1063,12 +1079,19 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                             'distance_km': distance,
                             'message': f'Ride completed! UGX {fare:,} added to your wallet.'
                         })
-                    else:
+                    elif payment_method == 'cash':
                         await websocket.send_json({
                             'type': 'ride_completed_confirmation',
                             'fare': fare,
                             'distance_km': distance,
                             'message': f'Ride completed! Customer will pay UGX {fare:,} in cash.'
+                        })
+                    else:
+                        await websocket.send_json({
+                            'type': 'ride_completed_confirmation',
+                            'fare': fare,
+                            'distance_km': distance,
+                            'message': f'Ride completed! Payment processed via {payment_method.upper()}.'
                         })
                     
                     await manager.send(customer_id, {
@@ -1117,6 +1140,17 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
                 
                 fare = calculate_fare(distance_km, data['pickup_lat'], data['pickup_lng'])
                 payment_method = data.get('payment_method', 'wallet')
+                
+                # Check wallet balance for wallet payments
+                if payment_method == 'wallet':
+                    wallet_balance = await get_wallet_balance(customer_id)
+                    if wallet_balance < fare:
+                        await websocket.send_json({
+                            'type': 'payment_error',
+                            'message': f'Insufficient wallet balance. Available: UGX {wallet_balance:,}, Required: UGX {fare:,}'
+                        })
+                        print(f"❌ Customer {customer_id[:8]} insufficient wallet balance")
+                        return
                 
                 MAX_SEARCH_RADIUS_KM = 50
                 nearest = None
@@ -1226,7 +1260,7 @@ if __name__ == "__main__":
     print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FULLY FIXED)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
-    print("💰 Payment system: Active (Cash payments do NOT affect wallet)")
+    print("💰 Payment system: Active (Wallet validation enabled)")
     print("⚡ Surge pricing: Active")
     print("🎁 Referral system: Active")
     print("💬 Support chat: Active")
