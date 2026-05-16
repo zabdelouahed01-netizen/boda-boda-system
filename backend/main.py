@@ -20,6 +20,7 @@ import uvicorn
 # ============================================
 # ============ SMS FUNCTION ============
 import requests
+============ SMS FUNCTION ============
 
 def send_otp_sms(phone: str, otp: str) -> dict:
     """Send OTP via SMS using Africa's Talking"""
@@ -53,6 +54,7 @@ def send_otp_sms(phone: str, otp: str) -> dict:
     except Exception as e:
         print(f"❌ SMS error: {e}")
         return {"success": False, "message": str(e)}
+    
 import asyncpg
 
 DB_POOL = None
@@ -937,6 +939,40 @@ async def driver_withdrawal(request: dict):
         "reference": reference,
         "new_balance": new_balance
     }
+
+
+@app.post("/api/send-otp")
+async def send_otp_endpoint(request: dict):
+    phone = request.get('phone')
+    print(f"📱 Send OTP request for: {phone}")
+    
+    if not phone:
+        return {"success": False, "message": "Phone number required"}
+    
+    # Generate OTP (you already have this function)
+    otp_code = await generate_otp(phone)
+    
+    # Try to send SMS
+    sms_result = send_otp_sms(phone, otp_code)
+    
+    if sms_result["success"]:
+        return {
+            "success": True,
+            "message": "OTP sent via SMS",
+            "otp": otp_code
+        }
+    else:
+        # Fallback to console
+        print(f"⚠️ SMS failed, OTP: {otp_code}")
+        return {
+            "success": True,
+            "message": "OTP generated (check logs)",
+            "otp": otp_code
+        }
+
+
+
+
 
 # ============================================
 # ADMIN ENDPOINTS
