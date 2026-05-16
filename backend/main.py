@@ -685,9 +685,6 @@ manager = ConnectionManager()
 # AUTHENTICATION ENDPOINTS
 # ============================================
 
-# Add import at top
-from sms_service import send_otp_sms
-
 @app.post("/api/send-otp")
 async def send_otp_endpoint(request: dict):
     phone = request.get('phone')
