@@ -14,6 +14,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 import uvicorn
+from sms_service import send_otp_sms
 
 # ============================================
 # DATABASE SETUP - POSTGRESQL
@@ -685,14 +686,38 @@ manager = ConnectionManager()
 # AUTHENTICATION ENDPOINTS
 # ============================================
 
+# Add import at top
+from sms_service import send_otp_sms
+
 @app.post("/api/send-otp")
 async def send_otp_endpoint(request: dict):
     phone = request.get('phone')
     print(f"📱 Send OTP request for: {phone}")
+    
     if not phone:
         return {"success": False, "message": "Phone number required"}
+    
+    # Generate OTP (your existing code)
     otp_code = await generate_otp(phone)
-    return {"success": True, "message": "OTP sent successfully", "otp": otp_code}
+    
+    # Try to send SMS
+    sms_result = send_otp_sms(phone, otp_code)
+    
+    if sms_result["success"]:
+        return {
+            "success": True,
+            "message": "OTP sent via SMS",
+            "otp": otp_code
+        }
+    else:
+        # Fallback to console (existing behavior)
+        print(f"⚠️ SMS failed, OTP: {otp_code}")
+        return {
+            "success": True,
+            "message": "OTP sent (check console)",
+            "otp": otp_code
+        }
+
 
 @app.post("/api/verify-otp")
 async def verify_otp_endpoint(request: dict):
