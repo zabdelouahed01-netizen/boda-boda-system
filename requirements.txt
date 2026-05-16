@@ -4,5 +4,5 @@ websockets==12.0
 asyncpg==0.29.0
 python-socketio==5.10.0
 aiofiles==23.2.1
-africastalking=
+africastalking
 requests==2.31.0
