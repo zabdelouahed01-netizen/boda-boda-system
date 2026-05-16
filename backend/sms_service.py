@@ -1,13 +1,14 @@
 """
-Africa's Talking SMS Service - Using your working configuration
+SMS Service - Africa's Talking
 """
 
 import requests
+import os
 
 # Sandbox configuration (working from your test)
 SMS_API_URL = "http://api.sandbox.africastalking.com/version1/messaging"
 SMS_USERNAME = "sandbox"
-SMS_API_KEY = "atsk_fe1c0dcda0ed58eb254db24e1d05026faaf0a34c73148e748d6e8e8381a1d575fc556ea2"  # Your working API key
+SMS_API_KEY = "atsk_fe1c0dcda0ed58eb254db24e1d05026faaf0a34c73148e748d6e8e8381a1d575fc556ea2"  # Replace with your actual key
 
 def format_phone_number(phone: str) -> str:
     """Format phone number for Africa's Talking"""
@@ -27,7 +28,6 @@ def send_otp_sms(phone: str, otp: str) -> dict:
         "apiKey": SMS_API_KEY,
     }
     
-    # NO "from" field - this works in sandbox
     data = {
         "username": SMS_USERNAME,
         "to": phone,
