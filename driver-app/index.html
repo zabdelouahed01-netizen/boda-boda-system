@@ -108,7 +108,6 @@
         }
         .payment-wallet { background: #4CAF50; color: white; }
         .payment-cash { background: #ff9800; color: white; }
-        .payment-mtn { background: #FFC107; color: #333; }
         
         .rating-badge {
             background: #ff9800;
@@ -156,40 +155,24 @@
             color: #666;
         }
         
-        /* Payment Method Modal */
-        .payment-method-modal {
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.9);
-            z-index: 20000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        .payment-method-card {
-            background: white;
-            border-radius: 20px;
-            padding: 25px;
-            width: 300px;
-            text-align: center;
-        }
-        .payment-method-card h3 {
-            margin-bottom: 20px;
-        }
-        .payment-method-card button {
-            width: 100%;
+        .document-section {
+            background: #f8f9fa;
             padding: 15px;
-            margin: 8px 0;
-            border: none;
-            border-radius: 12px;
-            font-size: 16px;
-            font-weight: bold;
-            cursor: pointer;
+            border-radius: 16px;
+            margin-bottom: 15px;
         }
-        .btn-wallet { background: #4CAF50; color: white; }
-        .btn-cash { background: #ff9800; color: white; }
-        .btn-mtn { background: #FFC107; color: #333; }
-        .btn-airtel { background: #E91E63; color: white; }
+        .upload-item {
+            margin-bottom: 15px;
+        }
+        .upload-item label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .upload-item input {
+            width: 100%;
+            padding: 10px;
+        }
     </style>
 </head>
 <body>
@@ -207,7 +190,6 @@
             <small>Paid directly to you (not in wallet)</small>
         </div>
         
-        <!-- Driver Analytics Section -->
         <div class="analytics-card" id="analyticsCard">
             <h4>📊 Your Performance</h4>
             <div class="analytics-grid" id="analyticsGrid">
@@ -218,12 +200,35 @@
             </div>
         </div>
         
+        <!-- Driver Document Upload Section -->
+        <div class="document-section" id="documentSection">
+            <div class="section-title">📄 Driver Verification</div>
+            <div id="documentStatus"></div>
+            <div id="uploadForm">
+                <div class="upload-item">
+                    <label>Driver's License Photo</label>
+                    <input type="file" id="licensePhoto" accept="image/*" capture="environment">
+                    <div id="licensePreview" style="margin-top: 5px;"></div>
+                </div>
+                <div class="upload-item">
+                    <label>Bike Registration Photo</label>
+                    <input type="file" id="bikeRegistration" accept="image/*" capture="environment">
+                    <div id="bikePreview" style="margin-top: 5px;"></div>
+                </div>
+                <div class="upload-item">
+                    <label>Profile Photo (Optional)</label>
+                    <input type="file" id="profilePhoto" accept="image/*" capture="environment">
+                    <div id="profilePreview" style="margin-top: 5px;"></div>
+                </div>
+                <button onclick="uploadDocuments()" style="background: #4CAF50; width: 100%;">📤 Submit for Review</button>
+            </div>
+        </div>
+        
         <div class="stats">
             <div class="stat-box"><div class="number" id="onlineDriversCount">0</div><div class="label">Online</div></div>
             <div class="stat-box"><div class="number" id="pendingRidesCount">0</div><div class="label">Pending</div></div>
         </div>
         
-        <!-- Withdrawal Section -->
         <div class="withdrawal-section">
             <h4>💸 Withdraw Wallet Balance</h4>
             <div style="background:#e8f5e9; padding:10px; border-radius:12px; margin-bottom:15px;">
@@ -312,43 +317,25 @@
         </div>
     </div>
     
-    <!-- Payment Method Modal -->
-    <div id="paymentMethodModal" class="payment-method-modal" style="display:none;">
-        <div class="payment-method-card">
-            <h3>💵 How did customer pay?</h3>
-            <button class="btn-wallet" onclick="completeRideWithMethod('wallet')">💳 Wallet / Mobile Money</button>
-            <button class="btn-cash" onclick="completeRideWithMethod('cash')">💵 Cash (Paid to you)</button>
-            <button class="close-btn" onclick="closePaymentMethodModal()" style="background:#999; margin-top:10px;">Cancel</button>
-        </div>
-    </div>
-    
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.js"></script>
     <script>
+        const API_URL = 'https://boda-boda-system.onrender.com';
         let map, driverMarker, pickupMarker, destinationMarker, ws, currentLocation = null, currentRideId = null;
         let isOnline = false, walletEarnings = 0, cashEarnings = 0, ridesCompleted = 0;
-        let currentRideFare = 0, currentRideDistance = 0;
-        let currentUser = null;
-        let currentPickupLat = 0, currentPickupLng = 0;
-        let currentDestLat = 0, currentDestLng = 0;
-        let routingControl = null;
-        let currentPhone = '';
-        let driverRating = 0;
-        let driverWalletBalance = 0;
-        let supportWs = null;
-        let pendingPaymentMethod = null;
-        
-        // Ride History array
+        let currentRideFare = 0, currentRideDistance = 0, currentUser = null;
+        let currentPickupLat = 0, currentPickupLng = 0, currentDestLat = 0, currentDestLng = 0, currentPaymentMethod = 'wallet';
+        let routingControl = null, currentPhone = '', driverRating = 0, driverWalletBalance = 0, supportWs = null;
         let rideHistory = [];
         
+        // ============ AUTHENTICATION ============
         async function sendOTP() {
             const phone = document.getElementById('phoneInput').value;
             if (!phone) { showLoginStatus('Enter phone number', 'error'); return; }
             currentPhone = phone;
             showLoginStatus('Sending OTP...', 'info');
-            
             try {
-                const response = await fetch('https://boda-boda-system.onrender.com/api/send-otp', {
+                const response = await fetch(`${API_URL}/api/send-otp`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone: phone })
@@ -371,9 +358,8 @@
             const code = document.getElementById('otpInput').value;
             if (!code) { showLoginStatus('Enter OTP code', 'error'); return; }
             showLoginStatus('Verifying...', 'info');
-            
             try {
-                const response = await fetch('https://boda-boda-system.onrender.com/api/verify-otp', {
+                const response = await fetch(`${API_URL}/api/verify-otp`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ phone: currentPhone, code: code, name: 'Driver', role: 'driver' })
@@ -396,207 +382,6 @@
             } catch (error) {
                 showLoginStatus('Connection error', 'error');
             }
-        }
-        
-        async function loadDriverData() {
-            await loadDriverRating();
-            await loadWalletBalance();
-            await loadTransactions();
-            await loadDriverAnalytics();
-            await loadCashEarnings();
-        }
-        
-        async function loadCashEarnings() {
-            // Load cash earnings from localStorage
-            const saved = localStorage.getItem(`driverCashEarnings_${currentUser.id}`);
-            if (saved) {
-                cashEarnings = parseInt(saved) || 0;
-                document.getElementById('cashEarningsAmount').textContent = formatUGX(cashEarnings);
-                document.getElementById('cashEarningsCard').style.display = 'block';
-            }
-        }
-        
-        function saveCashEarnings() {
-            localStorage.setItem(`driverCashEarnings_${currentUser.id}`, cashEarnings.toString());
-            document.getElementById('cashEarningsAmount').textContent = formatUGX(cashEarnings);
-        }
-        
-        async function loadDriverRating() {
-            try {
-                const response = await fetch(`https://boda-boda-system.onrender.com/api/driver/rating/${currentUser.id}`);
-                const data = await response.json();
-                if (data.success) {
-                    driverRating = data.rating;
-                    document.getElementById('ratingDisplay').innerHTML = `⭐ ${driverRating.toFixed(1)}`;
-                }
-            } catch (error) {
-                console.log('Could not load rating');
-            }
-        }
-        
-        async function loadDriverAnalytics() {
-            try {
-                const response = await fetch(`https://boda-boda-system.onrender.com/api/driver/analytics/${currentUser.id}`);
-                const data = await response.json();
-                if (data.success && data.analytics) {
-                    document.getElementById('analyticsRating').innerHTML = data.analytics.avg_rating.toFixed(1);
-                    document.getElementById('analyticsCompletion').innerHTML = data.analytics.completion_rate + '%';
-                    document.getElementById('analyticsResponse').innerHTML = data.analytics.avg_response_time + 's';
-                    document.getElementById('analyticsPeak').innerHTML = data.analytics.peak_hour + ':00';
-                }
-            } catch (error) {
-                console.log('Could not load analytics');
-            }
-        }
-        
-        async function loadWalletBalance() {
-            try {
-                const response = await fetch(`https://boda-boda-system.onrender.com/api/wallet/${currentUser.id}`);
-                const data = await response.json();
-                if (data.success) {
-                    driverWalletBalance = data.balance;
-                    document.getElementById('earningsAmount').textContent = formatUGX(driverWalletBalance);
-                    document.getElementById('availableBalance').innerHTML = formatUGX(driverWalletBalance);
-                }
-            } catch (error) {
-                console.log('Could not load wallet');
-            }
-        }
-        
-        async function loadTransactions() {
-            try {
-                const response = await fetch(`https://boda-boda-system.onrender.com/api/transactions/${currentUser.id}`);
-                const data = await response.json();
-                if (data.transactions) {
-                    window.driverTransactions = data.transactions;
-                }
-            } catch (error) {
-                console.log('Could not load transactions');
-            }
-        }
-        
-        async function requestWithdrawal() {
-            const method = document.getElementById('withdrawMethod').value;
-            const phone = document.getElementById('withdrawPhone').value;
-            const amount = parseInt(document.getElementById('withdrawAmount').value);
-            
-            if (!amount || amount < 10000) {
-                showNotification('Minimum withdrawal is UGX 10,000', 'error');
-                return;
-            }
-            if (amount > driverWalletBalance) {
-                showNotification('Insufficient wallet balance', 'error');
-                return;
-            }
-            if (!phone) {
-                showNotification('Enter mobile money number', 'error');
-                return;
-            }
-            
-            showNotification('Processing withdrawal request...', 'info');
-            
-            try {
-                const response = await fetch('https://boda-boda-system.onrender.com/api/driver/withdraw', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        driver_id: currentUser.id,
-                        amount: amount,
-                        method: method,
-                        phone: phone
-                    })
-                });
-                const data = await response.json();
-                
-                if (data.success) {
-                    showNotification(`Withdrawal request submitted for ${formatUGX(amount)}`, 'success');
-                    document.getElementById('withdrawAmount').value = '';
-                    document.getElementById('withdrawPhone').value = '';
-                    await loadWalletBalance();
-                    await loadTransactions();
-                    
-                    if (data.new_balance !== undefined) {
-                        driverWalletBalance = data.new_balance;
-                    }
-                } else {
-                    showNotification(data.message || 'Withdrawal failed', 'error');
-                }
-            } catch (error) {
-                showNotification('Connection error', 'error');
-            }
-        }
-        
-        function showTransactionModal() {
-            const modal = document.getElementById('transactionModal');
-            const txList = document.getElementById('transactionList');
-            
-            const transactions = window.driverTransactions || [];
-            
-            if (transactions.length === 0) {
-                txList.innerHTML = '<div style="text-align:center; padding:40px; color:#999;">No transactions yet</div>';
-            } else {
-                txList.innerHTML = transactions.map(tx => `
-                    <div style="padding:12px; border-bottom:1px solid #eee;">
-                        <div style="display:flex; justify-content:space-between;">
-                            <span>${tx.type === 'deposit' ? '➕ Deposit' : tx.type === 'withdrawal' ? '💸 Withdrawal' : '➖ Payment'}</span>
-                            <span style="color:${tx.type === 'deposit' ? '#4CAF50' : '#f44336'}">${formatUGX(tx.amount)}</span>
-                        </div>
-                        <div style="font-size:11px; color:#999; margin-top:5px;">
-                            ${tx.method} • ${tx.status} • ${new Date(tx.created_at).toLocaleString()}
-                        </div>
-                        ${tx.description ? `<div style="font-size:11px; color:#666; margin-top:3px;">${tx.description}</div>` : ''}
-                    </div>
-                `).join('');
-            }
-            modal.style.display = 'flex';
-        }
-        
-        function closeTransactionModal() {
-            document.getElementById('transactionModal').style.display = 'none';
-        }
-        
-        // ============ SUPPORT CHAT ============
-        function openSupportChat() {
-            document.getElementById('supportModal').style.display = 'flex';
-            
-            if (!supportWs) {
-                supportWs = new WebSocket(`wss://boda-boda-system.onrender.com/ws/support/${currentUser.id}`);
-                supportWs.onmessage = (e) => {
-                    const data = JSON.parse(e.data);
-                    addSupportMessage(data.message, data.from_admin, data.timestamp);
-                };
-            }
-        }
-        
-        function closeSupportChat() {
-            document.getElementById('supportModal').style.display = 'none';
-        }
-        
-        function addSupportMessage(message, fromAdmin, timestamp) {
-            const container = document.getElementById('supportMessages');
-            const isAdmin = fromAdmin;
-            container.innerHTML += `
-                <div style="margin:5px 0; text-align:${isAdmin ? 'left' : 'right'}">
-                    <div style="display:inline-block; background:${isAdmin ? '#4CAF50' : '#ddd'}; color:${isAdmin ? 'white' : 'black'}; padding:10px 15px; border-radius:18px; max-width:80%;">
-                        <div>${message}</div>
-                        <div style="font-size:10px; opacity:0.7;">${new Date(timestamp).toLocaleTimeString()}</div>
-                    </div>
-                </div>
-            `;
-            container.scrollTop = container.scrollHeight;
-        }
-        
-        function sendSupportMessage() {
-            const input = document.getElementById('supportInput');
-            if (!input.value.trim() || !supportWs) return;
-            
-            supportWs.send(JSON.stringify({
-                type: 'message',
-                message: input.value
-            }));
-            
-            addSupportMessage(input.value, false, new Date().toISOString());
-            input.value = '';
         }
         
         function resetLogin() {
@@ -624,44 +409,254 @@
             }
         }
         
-        // ============ RIDE HISTORY FUNCTIONS ============
+        // ============ DRIVER DATA ============
+        async function loadDriverData() {
+            await loadDriverRating();
+            await loadWalletBalance();
+            await loadTransactions();
+            await loadDriverAnalytics();
+            await loadCashEarnings();
+            await checkDocumentStatus();
+        }
+        
+        async function loadCashEarnings() {
+            const saved = localStorage.getItem(`driverCashEarnings_${currentUser.id}`);
+            if (saved) {
+                cashEarnings = parseInt(saved) || 0;
+                document.getElementById('cashEarningsAmount').textContent = formatUGX(cashEarnings);
+                document.getElementById('cashEarningsCard').style.display = 'block';
+            }
+        }
+        
+        function saveCashEarnings() {
+            localStorage.setItem(`driverCashEarnings_${currentUser.id}`, cashEarnings.toString());
+            document.getElementById('cashEarningsAmount').textContent = formatUGX(cashEarnings);
+        }
+        
+        async function loadDriverRating() {
+            try {
+                const response = await fetch(`${API_URL}/api/driver/rating/${currentUser.id}`);
+                const data = await response.json();
+                if (data.success) {
+                    driverRating = data.rating;
+                    document.getElementById('ratingDisplay').innerHTML = `⭐ ${driverRating.toFixed(1)}`;
+                }
+            } catch (error) { console.log('Could not load rating'); }
+        }
+        
+        async function loadDriverAnalytics() {
+            try {
+                const response = await fetch(`${API_URL}/api/driver/analytics/${currentUser.id}`);
+                const data = await response.json();
+                if (data.success && data.analytics) {
+                    document.getElementById('analyticsRating').innerHTML = data.analytics.avg_rating.toFixed(1);
+                    document.getElementById('analyticsCompletion').innerHTML = data.analytics.completion_rate + '%';
+                    document.getElementById('analyticsResponse').innerHTML = data.analytics.avg_response_time + 's';
+                    document.getElementById('analyticsPeak').innerHTML = data.analytics.peak_hour + ':00';
+                }
+            } catch (error) { console.log('Could not load analytics'); }
+        }
+        
+        async function loadWalletBalance() {
+            try {
+                const response = await fetch(`${API_URL}/api/wallet/${currentUser.id}`);
+                const data = await response.json();
+                if (data.success) {
+                    driverWalletBalance = data.balance;
+                    document.getElementById('earningsAmount').textContent = formatUGX(driverWalletBalance);
+                    document.getElementById('availableBalance').innerHTML = formatUGX(driverWalletBalance);
+                }
+            } catch (error) { console.log('Could not load wallet'); }
+        }
+        
+        async function loadTransactions() {
+            try {
+                const response = await fetch(`${API_URL}/api/transactions/${currentUser.id}`);
+                const data = await response.json();
+                if (data.transactions) { window.driverTransactions = data.transactions; }
+            } catch (error) { console.log('Could not load transactions'); }
+        }
+        
+        // ============ DRIVER DOCUMENTS ============
+        async function checkDocumentStatus() {
+            try {
+                const response = await fetch(`${API_URL}/api/driver/document-status/${currentUser.id}`);
+                const data = await response.json();
+                const statusDiv = document.getElementById('documentStatus');
+                const uploadForm = document.getElementById('uploadForm');
+                if (data.success) {
+                    if (data.status === 'approved') {
+                        statusDiv.innerHTML = `<div style="background: #e8f5e9; padding: 10px; border-radius: 8px; color: #4CAF50; margin-bottom: 10px;">✅ Your documents have been approved! You can now go online.</div>`;
+                        uploadForm.style.display = 'none';
+                        document.getElementById('onlineToggle').disabled = false;
+                    } else if (data.status === 'pending') {
+                        statusDiv.innerHTML = `<div style="background: #fff3e0; padding: 10px; border-radius: 8px; color: #ff9800; margin-bottom: 10px;">⏳ Your documents are being reviewed.</div>`;
+                        uploadForm.style.display = 'none';
+                        document.getElementById('onlineToggle').disabled = true;
+                        document.getElementById('onlineToggle').checked = false;
+                        toggleOnline(false);
+                    } else if (data.status === 'rejected') {
+                        statusDiv.innerHTML = `<div style="background: #ffebee; padding: 10px; border-radius: 8px; color: #f44336; margin-bottom: 10px;">❌ Your documents were rejected. Reason: ${data.rejection_reason || 'Please re-upload clear photos'}</div>`;
+                        uploadForm.style.display = 'block';
+                        document.getElementById('onlineToggle').disabled = true;
+                    } else {
+                        statusDiv.innerHTML = `<div style="background: #e3f2fd; padding: 10px; border-radius: 8px; color: #2196F3; margin-bottom: 10px;">📄 Please upload your documents to start earning.</div>`;
+                        uploadForm.style.display = 'block';
+                        document.getElementById('onlineToggle').disabled = true;
+                    }
+                }
+            } catch (error) { console.log('Could not check document status'); }
+        }
+        
+        function previewImage(input, previewId) {
+            if (input.files && input.files[0]) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    document.getElementById(previewId).innerHTML = `<img src="${e.target.result}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 8px; margin-top: 5px;">`;
+                };
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+        
+        async function uploadDocuments() {
+            const licensePhoto = document.getElementById('licensePhoto').files[0];
+            const bikeRegistration = document.getElementById('bikeRegistration').files[0];
+            const profilePhoto = document.getElementById('profilePhoto').files[0];
+            if (!licensePhoto) { showNotification('Please select your driver\'s license photo', 'error'); return; }
+            if (!bikeRegistration) { showNotification('Please select your bike registration photo', 'error'); return; }
+            const formData = new FormData();
+            formData.append('driver_id', currentUser.id);
+            formData.append('license_photo', licensePhoto);
+            formData.append('bike_registration', bikeRegistration);
+            if (profilePhoto) formData.append('profile_photo', profilePhoto);
+            showNotification('Uploading documents...', 'info');
+            try {
+                const response = await fetch(`${API_URL}/api/driver/upload-documents`, { method: 'POST', body: formData });
+                const data = await response.json();
+                if (data.success) {
+                    showNotification(data.message, 'success');
+                    await checkDocumentStatus();
+                    document.getElementById('licensePreview').innerHTML = '';
+                    document.getElementById('bikePreview').innerHTML = '';
+                    document.getElementById('profilePreview').innerHTML = '';
+                    document.getElementById('licensePhoto').value = '';
+                    document.getElementById('bikeRegistration').value = '';
+                    document.getElementById('profilePhoto').value = '';
+                } else {
+                    showNotification(data.message || 'Upload failed', 'error');
+                }
+            } catch (error) { showNotification('Upload failed. Please try again.', 'error'); }
+        }
+        
+        document.getElementById('licensePhoto')?.addEventListener('change', function() { previewImage(this, 'licensePreview'); });
+        document.getElementById('bikeRegistration')?.addEventListener('change', function() { previewImage(this, 'bikePreview'); });
+        document.getElementById('profilePhoto')?.addEventListener('change', function() { previewImage(this, 'profilePreview'); });
+        
+        // ============ WITHDRAWAL ============
+        async function requestWithdrawal() {
+            const method = document.getElementById('withdrawMethod').value;
+            const phone = document.getElementById('withdrawPhone').value;
+            const amount = parseInt(document.getElementById('withdrawAmount').value);
+            if (!amount || amount < 10000) { showNotification('Minimum withdrawal is UGX 10,000', 'error'); return; }
+            if (amount > driverWalletBalance) { showNotification('Insufficient wallet balance', 'error'); return; }
+            if (!phone) { showNotification('Enter mobile money number', 'error'); return; }
+            showNotification('Processing withdrawal request...', 'info');
+            try {
+                const response = await fetch(`${API_URL}/api/driver/withdraw`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ driver_id: currentUser.id, amount: amount, method: method, phone: phone })
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showNotification(`Withdrawal request submitted for ${formatUGX(amount)}`, 'success');
+                    document.getElementById('withdrawAmount').value = '';
+                    document.getElementById('withdrawPhone').value = '';
+                    await loadWalletBalance();
+                    await loadTransactions();
+                    if (data.new_balance !== undefined) driverWalletBalance = data.new_balance;
+                } else {
+                    showNotification(data.message || 'Withdrawal failed', 'error');
+                }
+            } catch (error) { showNotification('Connection error', 'error'); }
+        }
+        
+        function showTransactionModal() {
+            const modal = document.getElementById('transactionModal');
+            const txList = document.getElementById('transactionList');
+            const transactions = window.driverTransactions || [];
+            if (transactions.length === 0) {
+                txList.innerHTML = '<div style="text-align:center; padding:40px;">No transactions yet</div>';
+            } else {
+                txList.innerHTML = transactions.map(tx => `
+                    <div style="padding:12px; border-bottom:1px solid #eee;">
+                        <div style="display:flex; justify-content:space-between;">
+                            <span>${tx.type === 'deposit' ? '➕ Deposit' : tx.type === 'withdrawal' ? '💸 Withdrawal' : '➖ Payment'}</span>
+                            <span style="color:${tx.type === 'deposit' ? '#4CAF50' : '#f44336'}">${formatUGX(tx.amount)}</span>
+                        </div>
+                        <div style="font-size:11px; margin-top:5px;">${tx.method} • ${tx.status} • ${new Date(tx.created_at).toLocaleString()}</div>
+                        ${tx.description ? `<div style="font-size:11px; margin-top:3px;">${tx.description}</div>` : ''}
+                    </div>
+                `).join('');
+            }
+            modal.style.display = 'flex';
+        }
+        
+        function closeTransactionModal() { document.getElementById('transactionModal').style.display = 'none'; }
+        
+        // ============ SUPPORT CHAT ============
+        function openSupportChat() {
+            document.getElementById('supportModal').style.display = 'flex';
+            if (!supportWs) {
+                supportWs = new WebSocket(`wss://boda-boda-system.onrender.com/ws/support/${currentUser.id}`);
+                supportWs.onmessage = (e) => {
+                    const data = JSON.parse(e.data);
+                    addSupportMessage(data.message, data.from_admin, data.timestamp);
+                };
+            }
+        }
+        function closeSupportChat() { document.getElementById('supportModal').style.display = 'none'; }
+        function addSupportMessage(message, fromAdmin, timestamp) {
+            const container = document.getElementById('supportMessages');
+            container.innerHTML += `<div style="margin:5px 0; text-align:${fromAdmin ? 'left' : 'right'}"><div style="display:inline-block; background:${fromAdmin ? '#4CAF50' : '#ddd'}; color:${fromAdmin ? 'white' : 'black'}; padding:10px 15px; border-radius:18px; max-width:80%;"><div>${message}</div><div style="font-size:10px;">${new Date(timestamp).toLocaleTimeString()}</div></div></div>`;
+            container.scrollTop = container.scrollHeight;
+        }
+        function sendSupportMessage() {
+            const input = document.getElementById('supportInput');
+            if (!input.value.trim() || !supportWs) return;
+            supportWs.send(JSON.stringify({ type: 'message', message: input.value }));
+            addSupportMessage(input.value, false, new Date().toISOString());
+            input.value = '';
+        }
+        
+        // ============ RIDE HISTORY ============
         function saveToHistory(ride) {
             rideHistory.unshift({
-                id: Date.now(),
-                date: new Date().toLocaleString(),
-                pickup: ride.pickup,
-                destination: ride.destination,
-                fare: ride.fare,
-                distance: ride.distance,
+                id: Date.now(), date: new Date().toLocaleString(),
+                pickup: ride.pickup, destination: ride.destination,
+                fare: ride.fare, distance: ride.distance,
                 customerName: ride.customerName || 'Customer',
                 paymentMethod: ride.paymentMethod || 'wallet'
             });
             if (rideHistory.length > 50) rideHistory.pop();
             localStorage.setItem(`driverHistory_${currentUser.id}`, JSON.stringify(rideHistory));
         }
-        
         function loadHistoryFromStorage() {
             const saved = localStorage.getItem(`driverHistory_${currentUser.id}`);
-            if (saved) {
-                rideHistory = JSON.parse(saved);
-            } else {
-                rideHistory = [];
-            }
+            rideHistory = saved ? JSON.parse(saved) : [];
         }
-        
         function showHistoryModal() {
             const modal = document.getElementById('historyModal');
             const historyList = document.getElementById('historyList');
-            
             if (rideHistory.length === 0) {
-                historyList.innerHTML = '<div style="text-align:center; padding:40px; color:#999;">No rides yet. Complete your first ride!</div>';
+                historyList.innerHTML = '<div style="text-align:center; padding:40px;">No rides yet. Complete your first ride!</div>';
             } else {
                 historyList.innerHTML = rideHistory.map(ride => `
                     <div class="history-item">
                         <div class="history-customer">👤 ${ride.customerName}</div>
                         <div class="history-item-header">
                             <div><strong>📍 ${ride.destination || ride.pickup}</strong>
-                            <span class="payment-badge payment-${ride.paymentMethod}">${ride.paymentMethod === 'cash' ? '💵 Cash' : ride.paymentMethod === 'wallet' ? '💳 Wallet' : '📱 ' + ride.paymentMethod.toUpperCase()}</span>
+                            <span class="payment-badge payment-${ride.paymentMethod}">${ride.paymentMethod === 'cash' ? '💵 Cash' : '💳 ' + ride.paymentMethod}</span>
                             </div>
                             <div class="history-fare">${formatUGX(ride.fare)}</div>
                         </div>
@@ -672,33 +667,25 @@
             }
             modal.style.display = 'flex';
         }
-        
-        function closeHistoryModal() {
-            document.getElementById('historyModal').style.display = 'none';
-        }
-        
+        function closeHistoryModal() { document.getElementById('historyModal').style.display = 'none'; }
         function formatUGX(amount) { return 'UGX ' + amount.toLocaleString(); }
         
+        // ============ MAP & ROUTE ============
         function showFullRoute(pickupLat, pickupLng, destLat, destLng) {
             if (routingControl) map.removeControl(routingControl);
-            
             if (destLat && destLng && destLat !== 0 && destLng !== 0) {
                 routingControl = L.Routing.control({
-                    waypoints: [
-                        L.latLng(currentLocation.lat, currentLocation.lng),
-                        L.latLng(pickupLat, pickupLng),
-                        L.latLng(destLat, destLng)
-                    ],
+                    waypoints: [L.latLng(currentLocation.lat, currentLocation.lng), L.latLng(pickupLat, pickupLng), L.latLng(destLat, destLng)],
                     routeWhileDragging: false,
                     lineOptions: { styles: [{ color: '#2196F3', weight: 5, opacity: 0.8 }] },
-                    createMarker: function() { return null; }
+                    createMarker: () => null
                 }).addTo(map);
             } else {
                 routingControl = L.Routing.control({
                     waypoints: [L.latLng(currentLocation.lat, currentLocation.lng), L.latLng(pickupLat, pickupLng)],
                     routeWhileDragging: false,
                     lineOptions: { styles: [{ color: '#ff9800', weight: 5, opacity: 0.8 }] },
-                    createMarker: function() { return null; }
+                    createMarker: () => null
                 }).addTo(map);
             }
         }
@@ -706,19 +693,10 @@
         function initMap() {
             map = L.map('map').setView([0.3136, 32.5811], 13);
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-            
             driverMarker = L.marker([0, 0], { icon: L.divIcon({ html: '🛵', iconSize: [35, 35] }) }).addTo(map);
-            
-            pickupMarker = L.marker([0, 0], { 
-                icon: L.divIcon({ html: '📍', iconSize: [30, 30] }),
-                title: 'Pickup Location'
-            }).addTo(map);
+            pickupMarker = L.marker([0, 0], { icon: L.divIcon({ html: '📍', iconSize: [30, 30] }), title: 'Pickup Location' }).addTo(map);
             pickupMarker.setOpacity(0);
-            
-            destinationMarker = L.marker([0, 0], { 
-                icon: L.divIcon({ html: '🎯', iconSize: [30, 30] }),
-                title: 'Destination'
-            }).addTo(map);
+            destinationMarker = L.marker([0, 0], { icon: L.divIcon({ html: '🎯', iconSize: [30, 30] }), title: 'Destination' }).addTo(map);
             destinationMarker.setOpacity(0);
         }
         
@@ -734,28 +712,19 @@
             navigator.geolocation.watchPosition(pos => {
                 currentLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
                 driverMarker.setLatLng([currentLocation.lat, currentLocation.lng]);
-                if (currentRideId && currentPickupLat) {
-                    showFullRoute(currentPickupLat, currentPickupLng, currentDestLat, currentDestLng);
-                }
+                if (currentRideId && currentPickupLat) showFullRoute(currentPickupLat, currentPickupLng, currentDestLat, currentDestLng);
                 if (ws && ws.readyState === WebSocket.OPEN && isOnline) {
-                    ws.send(JSON.stringify({
-                        type: 'location_update',
-                        lat: currentLocation.lat,
-                        lng: currentLocation.lng,
-                        status: 'online',
-                        current_ride_id: currentRideId
-                    }));
+                    ws.send(JSON.stringify({ type: 'location_update', lat: currentLocation.lat, lng: currentLocation.lng, status: 'online', current_ride_id: currentRideId }));
                 }
             });
         }
         
         function connectWebSocket() {
-            ws = new WebSocket(`wss://boda-boda-system.onrender.com/ws/driver/${currentUser.id}`);
+            ws = new WebSocket(`wss://${API_URL.replace('https://', '')}/ws/driver/${currentUser.id}`);
             ws.onopen = () => { console.log('Connected'); showNotification('Connected', 'success'); };
             ws.onmessage = (e) => {
                 const data = JSON.parse(e.data);
                 console.log('Received:', data);
-                
                 if (data.type === 'new_ride_request') {
                     currentRideFare = data.fare;
                     currentRideDistance = data.distance_km;
@@ -763,30 +732,31 @@
                     currentPickupLng = data.pickup_lng;
                     currentDestLat = data.dest_lat || 0;
                     currentDestLng = data.dest_lng || 0;
-                    
+                    currentPaymentMethod = data.payment_method || 'wallet';
+                    const paymentMethodText = currentPaymentMethod === 'cash' ? '💵 CASH - Pay directly to you' : currentPaymentMethod === 'wallet' ? '💳 WALLET - App payment' : '📱 MOBILE MONEY';
+                    const paymentWarning = currentPaymentMethod === 'cash' ? '<p style="color:#ff9800; font-size:12px; margin-top:5px;">⚠️ Customer will pay you in cash</p>' : '<p style="color:#4CAF50; font-size:12px; margin-top:5px;">✅ Payment will be added to your wallet</p>';
                     if (currentPickupLat && currentPickupLng) {
                         pickupMarker.setLatLng([currentPickupLat, currentPickupLng]);
                         pickupMarker.setOpacity(1);
                         pickupMarker.bindPopup('📍 PICKUP LOCATION').openPopup();
                     }
-                    
                     if (currentDestLat && currentDestLng && currentDestLat !== 0) {
                         destinationMarker.setLatLng([currentDestLat, currentDestLng]);
                         destinationMarker.setOpacity(1);
                         destinationMarker.bindPopup('🎯 DESTINATION').openPopup();
                     }
-                    
-                    const bounds = [ [currentLocation.lat, currentLocation.lng] ];
+                    const bounds = [[currentLocation.lat, currentLocation.lng]];
                     if (currentPickupLat) bounds.push([currentPickupLat, currentPickupLng]);
                     if (currentDestLat && currentDestLat !== 0) bounds.push([currentDestLat, currentDestLng]);
                     map.fitBounds(bounds, { padding: [50, 50] });
-                    
                     document.getElementById('requestsList').innerHTML = `
                         <div class="ride-request" id="request_${data.ride_id}">
                             <h4>🛵 New Ride Request!</h4>
                             <p>📍 Pickup: ${data.pickup || 'Location on map'}</p>
                             <p>🎯 Destination: ${data.destination || 'Not specified'}</p>
                             <p>📏 Distance: ${data.distance_km}km away</p>
+                            <p><strong>💵 Payment: ${paymentMethodText}</strong></p>
+                            ${paymentWarning}
                             <div class="fare-amount">💰 ${formatUGX(data.fare)}</div>
                             <div class="button-group">
                                 <button class="accept-btn" onclick="acceptRide('${data.ride_id}', ${data.fare}, ${data.distance_km})">✅ Accept</button>
@@ -804,14 +774,11 @@
         
         function acceptRide(rideId, fare, distance) {
             if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify({ type: 'accept_ride', ride_id: rideId }));
-                
+                ws.send(JSON.stringify({ type: 'accept_ride', ride_id: rideId, payment_method: currentPaymentMethod }));
                 currentRideId = rideId;
                 currentRideFare = fare;
                 currentRideDistance = distance;
-                
                 showFullRoute(currentPickupLat, currentPickupLng, currentDestLat, currentDestLng);
-                
                 document.getElementById('requestsSection').style.display = 'none';
                 document.getElementById('activeRideSection').style.display = 'block';
                 document.getElementById('activeRideInfo').innerHTML = `
@@ -819,10 +786,11 @@
                         <h4>🛵 Active Ride</h4>
                         <p>💰 Fare: ${formatUGX(fare)}</p>
                         <p>📏 Total Distance: ${distance} km</p>
+                        <p>💵 Payment: ${currentPaymentMethod === 'cash' ? '💵 Cash (Customer pays directly)' : '💳 ' + currentPaymentMethod}</p>
                         <p>📍 Pickup: ${currentPickupLat.toFixed(6)}, ${currentPickupLng.toFixed(6)}</p>
                         <p>🎯 Destination: ${currentDestLat.toFixed(6)}, ${currentDestLng.toFixed(6)}</p>
                         <button class="start-btn" onclick="startRide()">🚀 Arrived - Start Ride</button>
-                        <button class="complete-btn" style="display:none;" id="completeBtn" onclick="showPaymentMethodModal()">✅ Complete Ride</button>
+                        <button class="complete-btn" onclick="completeRide()">✅ Complete Ride</button>
                     </div>
                 `;
                 showNotification('Ride accepted! Navigate to pickup.', 'success');
@@ -842,82 +810,49 @@
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({ type: 'ride_started', ride_id: currentRideId }));
                 document.querySelector('#activeRideInfo .start-btn').style.display = 'none';
-                document.getElementById('completeBtn').style.display = 'block';
                 showNotification('Ride started! Head to destination.', 'success');
             }
         }
         
-        function showPaymentMethodModal() {
-            document.getElementById('paymentMethodModal').style.display = 'flex';
-        }
-        
-        function closePaymentMethodModal() {
-            document.getElementById('paymentMethodModal').style.display = 'none';
-            pendingPaymentMethod = null;
-        }
-        
-        function completeRideWithMethod(paymentMethod) {
-            closePaymentMethodModal();
-            
+        function completeRide() {
             if (ws && ws.readyState === WebSocket.OPEN && currentRideId) {
-                // Save to history with payment method
                 saveToHistory({
                     pickup: `${currentPickupLat.toFixed(4)}, ${currentPickupLng.toFixed(4)}`,
                     destination: 'Ride completed',
                     fare: currentRideFare,
                     distance: currentRideDistance.toFixed(1),
                     customerName: 'Customer',
-                    paymentMethod: paymentMethod
+                    paymentMethod: currentPaymentMethod
                 });
-                
                 ws.send(JSON.stringify({
                     type: 'ride_completed',
                     ride_id: currentRideId,
                     fare: currentRideFare,
                     distance_km: currentRideDistance,
-                    payment_method: paymentMethod
+                    payment_method: currentPaymentMethod
                 }));
-                
-                // Handle earnings based on payment method
-                if (paymentMethod === 'cash') {
-                    // Cash payment - add to cash earnings, NOT wallet
+                if (currentPaymentMethod !== 'cash') {
+                    walletEarnings += currentRideFare;
+                    localStorage.setItem('driverEarnings', JSON.stringify({ earnings: walletEarnings, rides: ridesCompleted }));
+                    document.getElementById('earningsAmount').textContent = formatUGX(walletEarnings);
+                    showNotification(`Ride complete! Earned ${formatUGX(currentRideFare)} added to wallet.`, 'success');
+                } else {
                     cashEarnings += currentRideFare;
                     saveCashEarnings();
-                    ridesCompleted++;
-                    localStorage.setItem('driverEarnings', JSON.stringify({ earnings: walletEarnings, rides: ridesCompleted }));
-                    document.getElementById('ridesCount').textContent = ridesCompleted;
                     showNotification(`Ride complete! Customer will pay ${formatUGX(currentRideFare)} in cash.`, 'info');
-                } else {
-                    // Wallet/MTN/Airtel - add to wallet earnings
-                    walletEarnings += currentRideFare;
-                    ridesCompleted++;
-                    localStorage.setItem('driverEarnings', JSON.stringify({ earnings: walletEarnings, rides: ridesCompleted }));
-                    document.getElementById('ridesCount').textContent = ridesCompleted;
-                    showNotification(`Ride complete! Earned ${formatUGX(currentRideFare)}`, 'success');
                 }
-                
-                // Reload balances
-                setTimeout(() => {
-                    loadWalletBalance();
-                    loadDriverAnalytics();
-                }, 1000);
-                
-                if (routingControl) { map.removeControl(routingControl); routingControl = null; }
+                ridesCompleted++;
+                document.getElementById('ridesCount').textContent = ridesCompleted;
+                setTimeout(() => { loadWalletBalance(); loadDriverAnalytics(); }, 500);
+                if (routingControl) map.removeControl(routingControl);
                 pickupMarker.setOpacity(0);
                 destinationMarker.setOpacity(0);
-                
                 currentRideId = null;
                 document.getElementById('requestsSection').style.display = 'block';
                 document.getElementById('activeRideSection').style.display = 'none';
                 document.getElementById('requestsList').innerHTML = '<div class="empty-state">Go online to receive rides</div>';
-                
                 loadDriverRating();
             }
-        }
-        
-        function completeRide() {
-            // This function is kept for compatibility but replaced by showPaymentMethodModal
-            showPaymentMethodModal();
         }
         
         function toggleOnline(online) {
@@ -928,12 +863,7 @@
                 statusText.className = 'status-badge badge-online';
                 showNotification('You are ONLINE!', 'success');
                 if (ws && ws.readyState === WebSocket.OPEN && currentLocation) {
-                    ws.send(JSON.stringify({
-                        type: 'location_update',
-                        lat: currentLocation.lat,
-                        lng: currentLocation.lng,
-                        status: 'online'
-                    }));
+                    ws.send(JSON.stringify({ type: 'location_update', lat: currentLocation.lat, lng: currentLocation.lng, status: 'online' }));
                 }
             } else {
                 statusText.textContent = 'Offline';
@@ -951,9 +881,7 @@
             setTimeout(() => n.remove(), 3000);
         }
         
-        function playSound() {
-            try { new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3').play(); } catch(e) {}
-        }
+        function playSound() { try { new Audio('https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3').play(); } catch(e) {} }
         
         function loadEarnings() {
             const saved = localStorage.getItem('driverEarnings');

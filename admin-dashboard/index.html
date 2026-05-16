@@ -6,399 +6,272 @@
     <title>Boda Boda - Admin Dashboard</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: Arial, sans-serif; background: #f0f2f5; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f0f2f5; }
         
-        /* Sidebar */
         .sidebar {
             position: fixed; left: 0; top: 0; bottom: 0; width: 260px;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: white; padding: 20px;
+            color: white; padding: 20px; overflow-y: auto;
         }
-        .sidebar h2 { margin-bottom: 30px; font-size: 20px; }
+        .sidebar h2 { margin-bottom: 30px; font-size: 22px; display: flex; align-items: center; gap: 10px; }
         .sidebar .nav-item {
             padding: 12px 15px; margin: 5px 0; border-radius: 10px;
-            cursor: pointer; transition: all 0.3s;
+            cursor: pointer; transition: all 0.3s; display: flex; align-items: center; gap: 12px;
         }
-        .sidebar .nav-item:hover, .sidebar .nav-item.active {
-            background: rgba(255,255,255,0.1);
-        }
+        .sidebar .nav-item:hover, .sidebar .nav-item.active { background: rgba(255,255,255,0.1); }
         
-        /* Main Content */
-        .main-content {
-            margin-left: 260px; padding: 20px;
-        }
+        .main-content { margin-left: 260px; padding: 20px; min-height: 100vh; }
         
-        /* Stats Cards */
         .stats-grid {
-            display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
             gap: 20px; margin-bottom: 30px;
         }
         .stat-card {
             background: white; padding: 20px; border-radius: 15px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        .stat-card h3 { font-size: 14px; color: #666; margin-bottom: 10px; }
+        .stat-card h3 { font-size: 13px; color: #888; margin-bottom: 8px; text-transform: uppercase; }
         .stat-card .number { font-size: 32px; font-weight: bold; color: #333; }
-        .stat-card .trend { font-size: 12px; margin-top: 5px; }
-        .trend-up { color: #4CAF50; }
-        .trend-down { color: #f44336; }
         
-        /* Tables */
         .table-container {
             background: white; border-radius: 15px; padding: 20px;
             margin-bottom: 20px; overflow-x: auto;
         }
+        .table-container h3 { margin-bottom: 15px; color: #333; }
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid #eee; }
-        th { background: #f8f9fa; font-weight: bold; }
+        th { background: #f8f9fa; font-weight: 600; }
+        tr:hover { background: #fafafa; }
         
-        /* Buttons */
-        .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; }
+        .badge { padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+        .badge-success { background: #e8f5e9; color: #4CAF50; }
+        .badge-warning { background: #fff3e0; color: #ff9800; }
+        .badge-danger { background: #ffebee; color: #f44336; }
+        
+        .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
         .btn-primary { background: #4CAF50; color: white; }
         .btn-danger { background: #f44336; color: white; }
         .btn-warning { background: #ff9800; color: white; }
         
-        /* Modal */
         .modal {
             display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
             background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;
         }
         .modal-content {
             background: white; padding: 30px; border-radius: 20px;
-            max-width: 500px; width: 90%;
+            max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto;
         }
-        .modal input, .modal select, .modal textarea {
-            width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px;
+        .modal input, .modal select, .modal textarea { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; }
+        .modal button { margin-right: 10px; }
+        
+        @media (max-width: 768px) {
+            .sidebar { width: 70px; padding: 15px 10px; }
+            .sidebar .nav-item span:last-child { display: none; }
+            .sidebar h2 span { display: none; }
+            .main-content { margin-left: 70px; }
         }
     </style>
 </head>
 <body>
     <div class="sidebar">
-        <h2>🚀 Boda Boda Admin</h2>
-        <div class="nav-item active" onclick="showSection('overview')">📊 Overview</div>
-        <div class="nav-item" onclick="showSection('drivers')">🛵 Drivers</div>
-        <div class="nav-item" onclick="showSection('rides')">🚲 Rides</div>
-        <div class="nav-item" onclick="showSection('earnings')">💰 Earnings</div>
-        <div class="nav-item" onclick="showSection('surge')">⚡ Surge Pricing</div>
-        <div class="nav-item" onclick="showSection('referrals')">🎁 Referrals</div>
-        <div class="nav-item" onclick="showSection('support')">💬 Support</div>
+        <h2>🚀 <span>Boda Admin</span></h2>
+        <div class="nav-item active" onclick="showSection('overview')"><span>📊</span> <span>Overview</span></div>
+        <div class="nav-item" onclick="showSection('drivers')"><span>🛵</span> <span>Drivers</span></div>
+        <div class="nav-item" onclick="showSection('customers')"><span>👥</span> <span>Customers</span></div>
+        <div class="nav-item" onclick="showSection('rides')"><span>🚲</span> <span>Rides</span></div>
+        <div class="nav-item" onclick="showSection('earnings')"><span>💰</span> <span>Earnings</span></div>
+        <div class="nav-item" onclick="showSection('driverVerification')"><span>📄</span> <span>Verify Drivers</span></div>
+        <div class="nav-item" onclick="showSection('support')"><span>💬</span> <span>Support Chat</span></div>
     </div>
     
     <div class="main-content" id="mainContent">
-        <!-- Overview Section -->
         <div id="overviewSection">
             <div class="stats-grid" id="statsGrid"></div>
-            <div class="table-container">
-                <h3>Recent Rides</h3>
-                <div id="recentRidesTable"></div>
-            </div>
+            <div class="table-container"><h3>📋 Recent Rides</h3><div id="recentRidesTable"></div></div>
         </div>
         
-        <!-- Drivers Section -->
         <div id="driversSection" style="display:none;">
-            <div class="table-container">
-                <h3>All Drivers</h3>
-                <div id="driversTable"></div>
-            </div>
+            <div class="table-container"><h3>🛵 All Drivers</h3><div id="driversTable"></div></div>
         </div>
         
-        <!-- Rides Section -->
+        <div id="customersSection" style="display:none;">
+            <div class="table-container"><h3>👥 All Customers</h3><div id="customersTable"></div></div>
+        </div>
+        
         <div id="ridesSection" style="display:none;">
-            <div class="table-container">
-                <h3>All Rides</h3>
-                <div id="ridesTable"></div>
-            </div>
+            <div class="table-container"><h3>🚲 All Rides</h3><div id="ridesTable"></div></div>
         </div>
         
-        <!-- Earnings Section -->
         <div id="earningsSection" style="display:none;">
-            <div class="stats-grid">
-                <div class="stat-card"><h3>Total Platform Earnings</h3><div class="number" id="totalEarnings">UGX 0</div></div>
-                <div class="stat-card"><h3>This Month</h3><div class="number" id="monthEarnings">UGX 0</div></div>
-                <div class="stat-card"><h3>Commission Collected</h3><div class="number" id="commissionEarnings">UGX 0</div></div>
-            </div>
-            <div class="table-container">
-                <h3>Payout History</h3>
-                <div id="payoutsTable"></div>
-            </div>
+            <div class="stats-grid" id="earningsStatsGrid"></div>
+            <div class="table-container"><h3>💸 Payout History</h3><div id="payoutsTable"></div></div>
         </div>
         
-        <!-- Surge Pricing Section -->
-        <div id="surgeSection" style="display:none;">
-            <div class="table-container">
-                <h3>Surge Pricing Zones</h3>
-                <div id="surgeZones"></div>
-                <button class="btn btn-primary" onclick="addSurgeZone()" style="margin-top:20px;">+ Add Surge Zone</button>
-            </div>
+        <div id="driverVerificationSection" style="display:none;">
+            <div class="table-container"><h3>📄 Pending Driver Verifications</h3><div id="pendingDriversList"></div></div>
         </div>
         
-        <!-- Referrals Section -->
-        <div id="referralsSection" style="display:none;">
-            <div class="stats-grid">
-                <div class="stat-card"><h3>Total Referrals</h3><div class="number" id="totalReferrals">0</div></div>
-                <div class="stat-card"><h3>Active Referrals</h3><div class="number" id="activeReferrals">0</div></div>
-                <div class="stat-card"><h3>Rewards Given</h3><div class="number" id="rewardsGiven">UGX 0</div></div>
-            </div>
-            <div class="table-container">
-                <h3>Referral Leaderboard</h3>
-                <div id="referralLeaderboard"></div>
-            </div>
-        </div>
-        
-        <!-- Support Section -->
         <div id="supportSection" style="display:none;">
-            <div class="table-container">
-                <h3>Support Tickets</h3>
-                <div id="supportTickets"></div>
+            <div class="table-container"><h3>💬 Active Support Conversations</h3><div id="activeConversations"></div></div>
+            <div class="chat-container" id="chatContainer" style="display:none; height:500px; flex-direction:column; background:#f5f5f5; border-radius:15px; overflow:hidden;">
+                <div class="chat-header" style="background:#4CAF50; color:white; padding:15px; font-weight:bold;">Chat with: <span id="chatUserName">User</span> <button onclick="closeChat()" style="float:right; background:transparent; border:none; color:white; cursor:pointer;">✕</button></div>
+                <div id="chatMessages" style="flex:1; overflow-y:auto; padding:15px;"></div>
+                <div style="display:flex; gap:10px; padding:15px; background:white;">
+                    <input type="text" id="chatMessageInput" placeholder="Type a message..." style="flex:1; padding:12px; border:1px solid #ddd; border-radius:8px;">
+                    <button onclick="sendSupportMessage()" style="padding:12px 20px; background:#4CAF50; color:white; border:none; border-radius:8px;">Send</button>
+                </div>
             </div>
+            <div id="noChatSelected" style="text-align:center; padding:50px; color:#999;">Select a conversation to start chatting</div>
         </div>
     </div>
     
-    <!-- Modal -->
-    <div id="modal" class="modal">
-        <div class="modal-content">
-            <h3 id="modalTitle">Add Surge Zone</h3>
-            <div id="modalBody"></div>
-            <button onclick="saveModal()" class="btn btn-primary">Save</button>
-            <button onclick="closeModal()" class="btn" style="background:#999;">Cancel</button>
-        </div>
-    </div>
+    <div id="modal" class="modal"><div class="modal-content"><h3 id="modalTitle"></h3><div id="modalBody"></div><button onclick="closeModal()" class="btn btn-primary">Close</button></div></div>
     
     <script>
+        const API_URL = 'https://boda-boda-system.onrender.com';
         let currentSection = 'overview';
-        let adminToken = localStorage.getItem('adminToken');
+        let activeChatUserId = null;
+        let chatWs = null;
         
-        // Check admin login
-        if (!adminToken) {
-            const password = prompt('Enter admin password:');
-            if (password === 'BodaAdmin2024!') {
-                localStorage.setItem('adminToken', 'authenticated');
+        if (!localStorage.getItem('adminAuth')) {
+            const password = prompt('Enter Admin Password:');
+            if (password === 'BodaAdmin2025!') {
+                localStorage.setItem('adminAuth', 'true');
             } else {
-                alert('Wrong password');
-                location.reload();
+                alert('Invalid password');
+                window.location.href = 'https://bodacustomer.netlify.app';
             }
         }
         
-        // API base URL
-        const API_URL = 'https://boda-boda-system.onrender.com';
-        
         async function fetchAPI(endpoint, options = {}) {
-            const response = await fetch(`${API_URL}${endpoint}`, {
-                headers: { 'Content-Type': 'application/json' },
-                ...options
-            });
-            return response.json();
+            try {
+                const response = await fetch(`${API_URL}${endpoint}`, { headers: { 'Content-Type': 'application/json' }, ...options });
+                return await response.json();
+            } catch (error) { return {}; }
         }
         
+        function formatUGX(amount) { return 'UGX ' + (amount || 0).toLocaleString(); }
+        function formatDate(dateStr) { return dateStr ? new Date(dateStr).toLocaleString() : 'N/A'; }
+        
         async function loadOverview() {
-            // Load stats
             const stats = await fetchAPI('/api/admin/stats');
             document.getElementById('statsGrid').innerHTML = `
-                <div class="stat-card"><h3>Total Users</h3><div class="number">${stats.total_users || 0}</div></div>
-                <div class="stat-card"><h3>Active Drivers</h3><div class="number">${stats.active_drivers || 0}</div></div>
-                <div class="stat-card"><h3>Today's Rides</h3><div class="number">${stats.today_rides || 0}</div></div>
+                <div class="stat-card"><h3>Total Customers</h3><div class="number">${stats.total_customers || 0}</div></div>
+                <div class="stat-card"><h3>Total Drivers</h3><div class="number">${stats.total_drivers || 0}</div></div>
                 <div class="stat-card"><h3>Total Rides</h3><div class="number">${stats.total_rides || 0}</div></div>
-                <div class="stat-card"><h3>Revenue Today</h3><div class="number">UGX ${(stats.revenue_today || 0).toLocaleString()}</div></div>
-                <div class="stat-card"><h3>Total Revenue</h3><div class="number">UGX ${(stats.total_revenue || 0).toLocaleString()}</div></div>
+                <div class="stat-card"><h3>Today's Rides</h3><div class="number">${stats.today_rides || 0}</div></div>
+                <div class="stat-card"><h3>Total Revenue</h3><div class="number">${formatUGX(stats.total_revenue)}</div></div>
+                <div class="stat-card"><h3>Today's Revenue</h3><div class="number">${formatUGX(stats.today_revenue)}</div></div>
             `;
-            
-            // Load recent rides
             const rides = await fetchAPI('/api/admin/rides?limit=10');
             document.getElementById('recentRidesTable').innerHTML = `
-                <table>
-                    <thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Status</th><th>Time</th></tr></thead>
-                    <tbody>
-                        ${rides.map(ride => `
-                            <tr>
-                                <td>${ride.id}</td>
-                                <td>${ride.customer_name || 'N/A'}</td>
-                                <td>${ride.driver_name || 'N/A'}</td>
-                                <td>${ride.distance_km}km</td>
-                                <td>UGX ${ride.fare?.toLocaleString()}</td>
-                                <td><span class="status-${ride.status}">${ride.status}</span></td>
-                                <td>${new Date(ride.created_at).toLocaleString()}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+                <table><thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Status</th><th>Time</th></tr></thead>
+                <tbody>${rides.map(r => `<tr><td>${r.id?.substring(0,8)}</td><td>${r.customer_name || 'N/A'}</td><td>${r.driver_name || 'N/A'}</td><td>${r.distance_km || 0}km</td><td>${formatUGX(r.fare)}</td><td><span class="badge badge-success">${r.status || 'completed'}</span></td><td>${formatDate(r.requested_at)}</td></tr>`).join('')}</tbody></table>`;
         }
         
         async function loadDrivers() {
             const drivers = await fetchAPI('/api/admin/drivers');
             document.getElementById('driversTable').innerHTML = `
-                <table>
-                    <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Total Rides</th><th>Earnings</th><th>Rating</th><th>Status</th><th>Action</th></tr></thead>
-                    <tbody>
-                        ${drivers.map(driver => `
-                            <tr>
-                                <td>${driver.id}</td>
-                                <td>${driver.name}</td>
-                                <td>${driver.phone}</td>
-                                <td>${driver.total_rides}</td>
-                                <td>UGX ${driver.earnings?.toLocaleString()}</td>
-                                <td>⭐ ${driver.rating}/5</td>
-                                <td>${driver.is_online ? '🟢 Online' : '⚫ Offline'}</td>
-                                <td><button class="btn btn-danger" onclick="toggleDriver('${driver.id}')">${driver.is_approved ? 'Suspend' : 'Approve'}</button></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+                <table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Total Rides</th><th>Earnings</th><th>Rating</th><th>Status</th><th>Approved</th></tr></thead>
+                <tbody>${drivers.map(d => `<tr><td>${d.id?.substring(0,8)}</td><td>${d.name || 'N/A'}</td><td>${d.phone || 'N/A'}</td><td>${d.total_rides || 0}</td><td>${formatUGX(d.total_earnings)}</td><td>⭐ ${d.rating || 0}</td><td><span class="badge ${d.is_online ? 'badge-success' : 'badge-danger'}">${d.is_online ? 'Online' : 'Offline'}</span></td><td><span class="badge ${d.is_approved ? 'badge-success' : 'badge-warning'}">${d.is_approved ? 'Approved' : 'Pending'}</span></td></tr>`).join('')}</tbody></table>`;
+        }
+        
+        function loadCustomers() {
+            document.getElementById('customersTable').innerHTML = '<table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Total Rides</th><th>Joined</th></tr></thead><tbody><tr><td colspan="5" style="text-align:center;">Loading...</td></tr></tbody></table>';
         }
         
         async function loadRides() {
-            const rides = await fetchAPI('/api/admin/rides?limit=50');
+            const rides = await fetchAPI('/api/admin/rides?limit=100');
             document.getElementById('ridesTable').innerHTML = `
-                <table>
-                    <thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Status</th><th>Time</th></tr></thead>
-                    <tbody>
-                        ${rides.map(ride => `
-                            <tr>
-                                <td>${ride.id}</td>
-                                <td>${ride.customer_name || 'N/A'}</td>
-                                <td>${ride.driver_name || 'N/A'}</td>
-                                <td>${ride.distance_km}km</td>
-                                <td>UGX ${ride.fare?.toLocaleString()}</td>
-                                <td>${ride.status}</td>
-                                <td>${new Date(ride.created_at).toLocaleString()}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+                <table><thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Payment</th><th>Status</th><th>Time</th></tr></thead>
+                <tbody>${rides.map(r => `<tr><td>${r.id?.substring(0,8)}</td><td>${r.customer_name || 'N/A'}</td><td>${r.driver_name || 'N/A'}</td><td>${r.distance_km || 0}km</td><td>${formatUGX(r.fare)}</td><td>${r.payment_method || 'wallet'}</td><td><span class="badge badge-success">${r.status || 'completed'}</span></td><td>${formatDate(r.requested_at)}</td></tr>`).join('')}</tbody></table>`;
         }
         
-        async function loadSurgeZones() {
-            const zones = JSON.parse(localStorage.getItem('surgeZones') || '[]');
-            document.getElementById('surgeZones').innerHTML = `
-                <table>
-                    <thead><tr><th>Zone Name</th><th>Multiplier</th><th>Active</th><th>Action</th></tr></thead>
-                    <tbody>
-                        ${zones.map((zone, i) => `
-                            <tr>
-                                <td>${zone.name}</td>
-                                <td>${zone.multiplier}x</td>
-                                <td>${zone.active ? '✅ Active' : '❌ Inactive'}</td>
-                                <td><button class="btn btn-danger" onclick="deleteSurgeZone(${i})">Delete</button></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+        function loadEarnings() {
+            document.getElementById('earningsStatsGrid').innerHTML = `<div class="stat-card"><h3>Total Platform Revenue</h3><div class="number">${formatUGX(0)}</div></div><div class="stat-card"><h3>This Month</h3><div class="number">${formatUGX(0)}</div></div><div class="stat-card"><h3>Commission (20%)</h3><div class="number">${formatUGX(0)}</div></div>`;
+            document.getElementById('payoutsTable').innerHTML = '<table><thead><tr><th>Date</th><th>Driver</th><th>Amount</th><th>Status</th></tr></thead><tbody><tr><td colspan="4" style="text-align:center;">No payouts recorded</td></tr></tbody></table>';
         }
         
-        function addSurgeZone() {
-            document.getElementById('modalTitle').innerHTML = 'Add Surge Zone';
-            document.getElementById('modalBody').innerHTML = `
-                <input type="text" id="zoneName" placeholder="Zone Name (e.g., Kampala CBD)">
-                <input type="number" id="zoneMultiplier" placeholder="Surge Multiplier (1.5 = 50% extra)" step="0.1">
-                <label><input type="checkbox" id="zoneActive" checked> Active</label>
-            `;
-            window.modalAction = 'addSurge';
-            document.getElementById('modal').style.display = 'flex';
-        }
-        
-        function saveModal() {
-            if (window.modalAction === 'addSurge') {
-                const zones = JSON.parse(localStorage.getItem('surgeZones') || '[]');
-                zones.push({
-                    name: document.getElementById('zoneName').value,
-                    multiplier: parseFloat(document.getElementById('zoneMultiplier').value),
-                    active: document.getElementById('zoneActive').checked
-                });
-                localStorage.setItem('surgeZones', JSON.stringify(zones));
-                loadSurgeZones();
+        async function loadPendingDrivers() {
+            const data = await fetchAPI('/api/admin/pending-drivers');
+            const container = document.getElementById('pendingDriversList');
+            if (data.drivers && data.drivers.length > 0) {
+                container.innerHTML = `<table><thead><tr><th>Name</th><th>Phone</th><th>License</th><th>Bike Reg</th><th>Documents</th><th>Submitted</th><th>Action</th></tr></thead><tbody>${data.drivers.map(d => `
+                    <tr><td>${d.name}</td><td>${d.phone}</td><td>${d.license_number || 'N/A'}</td><td>${d.bike_registration || 'N/A'}</td>
+                    <td><a href="${d.license_photo}" target="_blank">License</a> | <a href="${d.bike_registration_photo}" target="_blank">Bike</a>${d.profile_photo ? ` | <a href="${d.profile_photo}" target="_blank">Profile</a>` : ''}</td>
+                    <td>${formatDate(d.submitted_at)}</td>
+                    <td><button class="btn btn-primary" onclick="verifyDriver('${d.id}', 'approve')" style="margin-right:5px;">✅ Approve</button><button class="btn btn-danger" onclick="verifyDriver('${d.id}', 'reject')">❌ Reject</button></td></tr>
+                `).join('')}</tbody></table>`;
+            } else {
+                container.innerHTML = '<div style="text-align:center; padding:40px;">No pending driver verifications</div>';
             }
-            closeModal();
         }
         
-        function deleteSurgeZone(index) {
-            const zones = JSON.parse(localStorage.getItem('surgeZones') || '[]');
-            zones.splice(index, 1);
-            localStorage.setItem('surgeZones', JSON.stringify(zones));
-            loadSurgeZones();
-        }
-        
-        async function loadReferrals() {
-            const referrals = JSON.parse(localStorage.getItem('referrals') || '[]');
-            document.getElementById('totalReferrals').innerHTML = referrals.length;
-            document.getElementById('activeReferrals').innerHTML = referrals.filter(r => r.active).length;
-            document.getElementById('rewardsGiven').innerHTML = `UGX ${referrals.reduce((sum, r) => sum + (r.reward || 0), 0).toLocaleString()}`;
-            
-            // Leaderboard
-            const userRefs = {};
-            referrals.forEach(r => {
-                userRefs[r.referred_by] = (userRefs[r.referred_by] || 0) + 1;
+        async function verifyDriver(driverId, action) {
+            let reason = '';
+            if (action === 'reject') { reason = prompt('Please enter rejection reason:'); if (!reason) return; }
+            const response = await fetch(`${API_URL}/api/admin/verify-driver/${driverId}`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action, reason: reason })
             });
-            const leaderboard = Object.entries(userRefs).sort((a,b) => b[1] - a[1]).slice(0, 10);
-            
-            document.getElementById('referralLeaderboard').innerHTML = `
-                <table>
-                    <thead><tr><th>Rank</th><th>User ID</th><th>Referrals</th></tr></thead>
-                    <tbody>
-                        ${leaderboard.map(([user, count], i) => `
-                            <tr><td>${i+1}</td><td>${user}</td><td>${count}</td></tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+            const data = await response.json();
+            if (data.success) { alert(data.message); loadPendingDrivers(); loadDrivers(); }
         }
         
-        async function loadSupportTickets() {
-            const tickets = JSON.parse(localStorage.getItem('supportTickets') || '[]');
-            document.getElementById('supportTickets').innerHTML = `
-                <table>
-                    <thead><tr><th>ID</th><th>User</th><th>Subject</th><th>Status</th><th>Created</th><th>Action</th></tr></thead>
-                    <tbody>
-                        ${tickets.map(ticket => `
-                            <tr>
-                                <td>${ticket.id}</td>
-                                <td>${ticket.user_name || ticket.user_id}</td>
-                                <td>${ticket.subject}</td>
-                                <td><span class="status-${ticket.status}">${ticket.status}</span></td>
-                                <td>${new Date(ticket.created_at).toLocaleString()}</td>
-                                <td><button class="btn btn-primary" onclick="viewTicket('${ticket.id}')">View</button></td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            `;
+        // Support Chat
+        let conversations = JSON.parse(localStorage.getItem('supportConversations') || '[]');
+        function loadSupportChat() {
+            const users = [...new Set(conversations.map(c => c.user_id))];
+            document.getElementById('activeConversations').innerHTML = `<table><thead><tr><th>User</th><th>Last Message</th><th>Time</th><th>Action</th></tr></thead><tbody>${users.map(userId => {
+                const userConversations = conversations.filter(c => c.user_id === userId);
+                const lastMsg = userConversations[userConversations.length - 1];
+                return `<tr><td>User: ${userId.substring(0,8)}</td><td>${lastMsg?.message?.substring(0,30) || ''}</td><td>${formatDate(lastMsg?.timestamp)}</td><td><button class="btn btn-primary" onclick="openChatWithUser('${userId}')">Chat</button></td></tr>`;
+            }).join('')}${users.length === 0 ? '<tr><td colspan="4" style="text-align:center;">No active conversations</td></tr>' : ''}</tbody></table>`;
         }
+        
+        function openChatWithUser(userId) {
+            activeChatUserId = userId;
+            document.getElementById('noChatSelected').style.display = 'none';
+            document.getElementById('chatContainer').style.display = 'flex';
+            document.getElementById('chatUserName').innerHTML = userId.substring(0, 8);
+            loadChatMessages();
+            if (chatWs) chatWs.close();
+            chatWs = new WebSocket(`wss://${API_URL.replace('https://', '')}/ws/admin/chat/${userId}`);
+            chatWs.onmessage = (e) => { const msg = JSON.parse(e.data); addChatMessage(msg.message, msg.from, msg.timestamp); };
+        }
+        
+        function loadChatMessages() { document.getElementById('chatMessages').innerHTML = ''; }
+        function addChatMessage(message, from, timestamp) {
+            const isSent = from === 'admin';
+            document.getElementById('chatMessages').innerHTML += `<div class="message ${isSent ? 'sent' : 'received'}" style="margin-bottom:10px; display:flex; justify-content:${isSent ? 'flex-end' : 'flex-start'}"><div style="max-width:70%; padding:10px 15px; border-radius:18px; background:${isSent ? '#4CAF50' : '#ddd'}; color:${isSent ? 'white' : 'black'}"><div>${message}</div><div style="font-size:10px; opacity:0.7;">${new Date(timestamp).toLocaleTimeString()}</div></div></div>`;
+            document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+        }
+        
+        function sendSupportMessage() {
+            const input = document.getElementById('chatMessageInput');
+            if (!input.value.trim() || !activeChatUserId) return;
+            if (chatWs && chatWs.readyState === WebSocket.OPEN) {
+                chatWs.send(JSON.stringify({ type: 'message', message: input.value, to: activeChatUserId, from: 'admin' }));
+                addChatMessage(input.value, 'admin', new Date().toISOString());
+                input.value = '';
+            }
+        }
+        function closeChat() { document.getElementById('chatContainer').style.display = 'none'; document.getElementById('noChatSelected').style.display = 'block'; activeChatUserId = null; if (chatWs) chatWs.close(); }
         
         function showSection(section) {
             currentSection = section;
-            const sections = ['overview', 'drivers', 'rides', 'earnings', 'surge', 'referrals', 'support'];
-            sections.forEach(s => {
-                document.getElementById(`${s}Section`).style.display = s === section ? 'block' : 'none';
-            });
-            
-            // Update sidebar active state
-            document.querySelectorAll('.nav-item').forEach((item, i) => {
-                item.classList.toggle('active', item.innerText.toLowerCase().includes(section));
-            });
-            
-            // Load section data
+            const sections = ['overview', 'drivers', 'customers', 'rides', 'earnings', 'driverVerification', 'support'];
+            sections.forEach(s => { document.getElementById(`${s}Section`).style.display = s === section ? 'block' : 'none'; });
+            document.querySelectorAll('.nav-item').forEach((item, i) => { item.classList.toggle('active', item.innerText.toLowerCase().includes(section)); });
             if (section === 'overview') loadOverview();
             if (section === 'drivers') loadDrivers();
             if (section === 'rides') loadRides();
-            if (section === 'surge') loadSurgeZones();
-            if (section === 'referrals') loadReferrals();
-            if (section === 'support') loadSupportTickets();
+            if (section === 'earnings') loadEarnings();
+            if (section === 'driverVerification') loadPendingDrivers();
+            if (section === 'support') loadSupportChat();
         }
         
-        function closeModal() {
-            document.getElementById('modal').style.display = 'none';
-        }
-        
-        // Auto-refresh every 30 seconds
-        setInterval(() => {
-            if (currentSection === 'overview') loadOverview();
-            if (currentSection === 'drivers') loadDrivers();
-            if (currentSection === 'rides') loadRides();
-        }, 30000);
-        
-        // Initial load
+        function closeModal() { document.getElementById('modal').style.display = 'none'; }
         loadOverview();
     </script>
 </body>
