@@ -781,7 +781,6 @@ async def send_otp_endpoint(request: dict):
         return {
             "success": True,
             "message": "OTP sent via SMS",
-            "otp": otp_code  # Remove in production
         }
     else:
         # Fallback to console
@@ -789,7 +788,6 @@ async def send_otp_endpoint(request: dict):
         return {
             "success": True,
             "message": "OTP generated (check server logs)",
-            "otp": otp_code
         }
 
 @app.post("/api/verify-otp")
