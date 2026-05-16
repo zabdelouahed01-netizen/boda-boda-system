@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (FULLY FIXED WITH WALLET VALIDATION)
+MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (WITH AUTO-MIGRATION)
 """
 
 import json
@@ -104,7 +104,6 @@ async def init_db():
             fare INTEGER,
             surge_multiplier REAL DEFAULT 1.0,
             status TEXT,
-            payment_method TEXT DEFAULT 'wallet',
             customer_rating INTEGER DEFAULT 0,
             requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             accepted_at TIMESTAMP,
@@ -635,7 +634,19 @@ async def startup_event():
         return
     
     await init_db()
-    print("✅ Database initialized")
+    
+    # ============ AUTO-MIGRATION: Add payment_method column ============
+    conn = await get_db()
+    try:
+        await conn.execute('ALTER TABLE rides ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT \'wallet\'')
+        print("✅ payment_method column verified/added to rides table")
+    except Exception as e:
+        print(f"⚠️ Migration note: {e}")
+    finally:
+        await release_db(conn)
+    # ===================================================================
+    
+    print("✅ Database initialized and ready")
 
 # ============================================
 # CONNECTION MANAGER
@@ -1257,7 +1268,7 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 60)
-    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (FULLY FIXED)")
+    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (WITH AUTO-MIGRATION)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
     print("💰 Payment system: Active (Wallet validation enabled)")
