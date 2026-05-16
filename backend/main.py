@@ -1,5 +1,5 @@
 """
-MAIN BACKEND SERVER - POSTGRESQL PRODUCTION (WITH AUTO-MIGRATION)
+MAIN BACKEND SERVER - COMPLETE WITH SMS (UGANDA)
 """
 
 import json
@@ -18,43 +18,7 @@ import uvicorn
 # ============================================
 # DATABASE SETUP - POSTGRESQL
 # ============================================
-# ============ SMS FUNCTION ============
-import requests
-============ SMS FUNCTION ============
 
-def send_otp_sms(phone: str, otp: str) -> dict:
-    """Send OTP via SMS using Africa's Talking"""
-    # Format phone number
-    phone = phone.replace(" ", "").replace("-", "").replace("+", "")
-    if phone.startswith("0"):
-        phone = "256" + phone[1:]
-    
-    message = f"Your Boda Boda verification code is: {otp}"
-    
-    headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "apiKey": "atsk_fe1c0dcda0ed58eb254db24e1d05026faaf0a34c73148e748d6e8e8381a1d575fc556ea2",
-    }
-    
-    data = {
-        "username": "sandbox",
-        "to": phone,
-        "message": message
-    }
-    
-    try:
-        response = requests.post("http://api.sandbox.africastalking.com/version1/messaging", headers=headers, data=data, timeout=30)
-        if response.status_code == 201:
-            result = response.json()
-            if 'Sent' in result.get('SMSMessageData', {}).get('Message', ''):
-                print(f"✅ OTP SMS sent to {phone}")
-                return {"success": True, "message": "OTP sent"}
-        return {"success": False, "message": "SMS failed"}
-    except Exception as e:
-        print(f"❌ SMS error: {e}")
-        return {"success": False, "message": str(e)}
-    
 import asyncpg
 
 DB_POOL = None
@@ -140,6 +104,7 @@ async def init_db():
             fare INTEGER,
             surge_multiplier REAL DEFAULT 1.0,
             status TEXT,
+            payment_method TEXT DEFAULT 'wallet',
             customer_rating INTEGER DEFAULT 0,
             requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             accepted_at TIMESTAMP,
@@ -241,6 +206,109 @@ async def init_db():
     print("✅ PostgreSQL database ready")
 
 # ============================================
+# SMS FUNCTION - Africa's Talking (Uganda)
+# ============================================
+
+import requests
+
+# Sandbox configuration
+SMS_API_URL = "http://api.sandbox.africastalking.com/version1/messaging"
+SMS_USERNAME = "sandbox"
+SMS_API_KEY = "atsk_fe1c0dcda0ed58eb254db24e1d05026faaf0a34c73148e748d6e8e8381a1d575fc556ea2"
+
+def format_phone_number_uganda(phone: str) -> str:
+    """
+    Format phone number for Uganda
+    Examples:
+    +256700000000 -> 256700000000
+    0700000000 -> 256700000000
+    256700000000 -> 256700000000
+    """
+    phone = phone.replace(" ", "").replace("-", "").replace("+", "")
+    if phone.startswith("0"):
+        phone = "256" + phone[1:]
+    return phone
+
+def send_otp_sms(phone: str, otp: str) -> dict:
+    """
+    Send OTP via SMS to Uganda numbers
+    """
+    formatted_phone = format_phone_number_uganda(phone)
+    
+    # Check if it's a Uganda number
+    if not formatted_phone.startswith("256"):
+        print(f"⚠️ Not a Uganda number: {formatted_phone}")
+        return {"success": False, "message": "Only Uganda numbers supported"}
+    
+    message = f"Your Boda Boda verification code is: {otp}"
+    
+    headers = {
+        "Accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "apiKey": SMS_API_KEY,
+    }
+    
+    data = {
+        "username": SMS_USERNAME,
+        "to": formatted_phone,
+        "message": message
+    }
+    
+    try:
+        response = requests.post(SMS_API_URL, headers=headers, data=data, timeout=30)
+        
+        if response.status_code == 201:
+            result = response.json()
+            if 'Sent' in result.get('SMSMessageData', {}).get('Message', ''):
+                print(f"✅ OTP SMS sent to {formatted_phone}")
+                return {"success": True, "message": "OTP sent"}
+        
+        print(f"❌ SMS failed: {response.text}")
+        return {"success": False, "message": "SMS failed"}
+    except Exception as e:
+        print(f"❌ SMS error: {e}")
+        return {"success": False, "message": str(e)}
+
+# ============================================
+# OTP FUNCTIONS
+# ============================================
+
+async def generate_otp(phone: str) -> str:
+    """Generate and store OTP code"""
+    conn = await get_db()
+    
+    await conn.execute("DELETE FROM otps WHERE phone = $1", phone)
+    
+    code = str(random.randint(100000, 999999))
+    expires_at = datetime.now() + timedelta(minutes=5)
+    
+    await conn.execute(
+        "INSERT INTO otps (phone, code, expires_at) VALUES ($1, $2, $3)",
+        phone, code, expires_at
+    )
+    
+    await release_db(conn)
+    print(f"🔐 Generated OTP for {phone}: {code}")
+    return code
+
+async def verify_otp_code(phone: str, code: str) -> bool:
+    """Verify OTP code"""
+    conn = await get_db()
+    
+    result = await conn.fetchrow(
+        "SELECT * FROM otps WHERE phone = $1 AND code = $2 AND expires_at > $3",
+        phone, code, datetime.now()
+    )
+    
+    if result:
+        await conn.execute("DELETE FROM otps WHERE phone = $1", phone)
+        await release_db(conn)
+        return True
+    
+    await release_db(conn)
+    return False
+
+# ============================================
 # DATABASE FUNCTIONS
 # ============================================
 
@@ -303,32 +371,6 @@ async def get_driver_rating(driver_id: str):
     user = await conn.fetchrow("SELECT rating, total_rides FROM users WHERE id = $1", driver_id)
     await release_db(conn)
     return {'rating': user[0] or 0, 'total_rides': user[1] or 0} if user else {'rating': 0, 'total_rides': 0}
-
-async def generate_otp(phone: str) -> str:
-    conn = await get_db()
-    await conn.execute("DELETE FROM otps WHERE phone = $1", phone)
-    
-    code = str(random.randint(100000, 999999))
-    expires_at = datetime.now() + timedelta(minutes=5)
-    
-    await conn.execute('INSERT INTO otps (phone, code, expires_at) VALUES ($1, $2, $3)', phone, code, expires_at)
-    await release_db(conn)
-    
-    print(f"📱 OTP for {phone}: {code}")
-    return code
-
-async def verify_otp(phone: str, code: str) -> bool:
-    conn = await get_db()
-    otp = await conn.fetchrow('SELECT * FROM otps WHERE phone = $1 AND code = $2 AND expires_at > $3', 
-                              phone, code, datetime.now())
-    
-    if otp:
-        await conn.execute("DELETE FROM otps WHERE phone = $1", phone)
-        await release_db(conn)
-        return True
-    
-    await release_db(conn)
-    return False
 
 async def update_driver_location(user_id: str, lat: float, lng: float, is_online: bool = True):
     conn = await get_db()
@@ -671,16 +713,15 @@ async def startup_event():
     
     await init_db()
     
-    # ============ AUTO-MIGRATION: Add payment_method column ============
+    # Add payment_method column if missing
     conn = await get_db()
     try:
         await conn.execute('ALTER TABLE rides ADD COLUMN IF NOT EXISTS payment_method TEXT DEFAULT \'wallet\'')
-        print("✅ payment_method column verified/added to rides table")
+        print("✅ payment_method column verified")
     except Exception as e:
-        print(f"⚠️ Migration note: {e}")
+        print(f"Note: {e}")
     finally:
         await release_db(conn)
-    # ===================================================================
     
     print("✅ Database initialized and ready")
 
@@ -718,24 +759,54 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 # ============================================
-# AUTHENTICATION ENDPOINTS
+# AUTHENTICATION ENDPOINTS (WITH SMS)
 # ============================================
 
-
-
+@app.post("/api/send-otp")
+async def send_otp_endpoint(request: dict):
+    """Send OTP to user's phone number via SMS"""
+    phone = request.get('phone')
+    print(f"📱 Send OTP request for: {phone}")
+    
+    if not phone:
+        return {"success": False, "message": "Phone number required"}
+    
+    # Generate and store OTP
+    otp_code = await generate_otp(phone)
+    
+    # Send SMS
+    sms_result = send_otp_sms(phone, otp_code)
+    
+    if sms_result["success"]:
+        return {
+            "success": True,
+            "message": "OTP sent via SMS",
+            "otp": otp_code  # Remove in production
+        }
+    else:
+        # Fallback to console
+        print(f"⚠️ SMS failed, OTP: {otp_code}")
+        return {
+            "success": True,
+            "message": "OTP generated (check server logs)",
+            "otp": otp_code
+        }
 
 @app.post("/api/verify-otp")
 async def verify_otp_endpoint(request: dict):
+    """Verify OTP and login/register user"""
     phone = request.get('phone')
     code = request.get('code')
     name = request.get('name', '')
     role = request.get('role', 'customer')
     referral_code = request.get('referral_code')
     
+    print(f"🔐 Verify OTP for: {phone}, Code: {code}")
+    
     if not phone or not code:
         return {"success": False, "message": "Phone and OTP required"}
     
-    if await verify_otp(phone, code):
+    if await verify_otp_code(phone, code):
         user = await get_user_by_phone(phone)
         
         if not user:
@@ -748,6 +819,7 @@ async def verify_otp_endpoint(request: dict):
                     await complete_referral(referrer['id'])
         
         await verify_user(phone, True)
+        await get_or_create_wallet(user['id'])
         
         return {
             "success": True,
@@ -940,40 +1012,6 @@ async def driver_withdrawal(request: dict):
         "new_balance": new_balance
     }
 
-
-@app.post("/api/send-otp")
-async def send_otp_endpoint(request: dict):
-    phone = request.get('phone')
-    print(f"📱 Send OTP request for: {phone}")
-    
-    if not phone:
-        return {"success": False, "message": "Phone number required"}
-    
-    # Generate OTP (you already have this function)
-    otp_code = await generate_otp(phone)
-    
-    # Try to send SMS
-    sms_result = send_otp_sms(phone, otp_code)
-    
-    if sms_result["success"]:
-        return {
-            "success": True,
-            "message": "OTP sent via SMS",
-            "otp": otp_code
-        }
-    else:
-        # Fallback to console
-        print(f"⚠️ SMS failed, OTP: {otp_code}")
-        return {
-            "success": True,
-            "message": "OTP generated (check logs)",
-            "otp": otp_code
-        }
-
-
-
-
-
 # ============================================
 # ADMIN ENDPOINTS
 # ============================================
@@ -1116,17 +1154,17 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                 if ride_id in active_rides:
                     customer_id = active_rides[ride_id]['customer_id']
                     
-                    # For wallet payments, verify balance again
+                    # For wallet payments, verify balance
                     if payment_method == 'wallet':
                         customer_balance = await get_wallet_balance(customer_id)
                         if customer_balance < fare:
                             await websocket.send_json({
                                 'type': 'payment_error',
-                                'message': f'Insufficient wallet balance'
+                                'message': 'Insufficient wallet balance'
                             })
                             await manager.send(customer_id, {
                                 'type': 'payment_error',
-                                'message': f'Insufficient wallet balance. Please add funds.'
+                                'message': 'Insufficient wallet balance'
                             })
                             del active_rides[ride_id]
                             return
@@ -1144,7 +1182,6 @@ async def driver_ws(driver_id: str, websocket: WebSocket):
                     }
                     await save_ride(ride_data)
                     
-                    # Process payment based on method
                     if payment_method == 'wallet':
                         await update_wallet_balance(customer_id, fare, 'debit')
                         await update_wallet_balance(driver_id, fare, 'credit')
@@ -1320,7 +1357,7 @@ async def root():
         "status": "running",
         "server": "Boda Boda System",
         "version": "3.0.0",
-        "features": ["surge_pricing", "referrals", "support_chat", "driver_analytics", "admin_dashboard"],
+        "features": ["sms_otp", "surge_pricing", "referrals", "support_chat", "driver_analytics", "admin_dashboard"],
         "online_drivers": len(online_drivers),
         "active_connections": len(manager.active_connections)
     }
@@ -1332,10 +1369,11 @@ async def health():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print("\n" + "=" * 60)
-    print("🚀 BODA BODA SYSTEM - POSTGRESQL PRODUCTION (WITH AUTO-MIGRATION)")
+    print("🚀 BODA BODA SYSTEM - WITH SMS (UGANDA)")
     print("=" * 60)
     print(f"📡 Server running on port {port}")
-    print("💰 Payment system: Active (Wallet validation enabled)")
+    print("📱 SMS OTP: Active (Uganda numbers +256)")
+    print("💰 Payment system: Active")
     print("⚡ Surge pricing: Active")
     print("🎁 Referral system: Active")
     print("💬 Support chat: Active")
