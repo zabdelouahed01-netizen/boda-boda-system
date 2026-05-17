@@ -47,22 +47,32 @@
         .badge-success { background: #e8f5e9; color: #4CAF50; }
         .badge-warning { background: #fff3e0; color: #ff9800; }
         .badge-danger { background: #ffebee; color: #f44336; }
+        .badge-info { background: #e3f2fd; color: #2196F3; }
         
-        .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.2s; }
+        .btn { padding: 8px 16px; border: none; border-radius: 8px; cursor: pointer; font-size: 13px; }
         .btn-primary { background: #4CAF50; color: white; }
         .btn-danger { background: #f44336; color: white; }
         .btn-warning { background: #ff9800; color: white; }
         
-        .modal {
-            display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;
+        .chat-container {
+            height: 500px; display: flex; flex-direction: column;
+            background: #f5f5f5; border-radius: 15px; overflow: hidden;
         }
-        .modal-content {
-            background: white; padding: 30px; border-radius: 20px;
-            max-width: 500px; width: 90%; max-height: 80vh; overflow-y: auto;
+        .chat-header { background: #4CAF50; color: white; padding: 15px; font-weight: bold; }
+        .chat-messages { flex: 1; overflow-y: auto; padding: 15px; }
+        .message { margin-bottom: 15px; display: flex; flex-direction: column; }
+        .message.sent { align-items: flex-end; }
+        .message.received { align-items: flex-start; }
+        .message-bubble {
+            max-width: 70%; padding: 10px 15px; border-radius: 18px;
+            word-wrap: break-word;
         }
-        .modal input, .modal select, .modal textarea { width: 100%; padding: 12px; margin: 10px 0; border: 1px solid #ddd; border-radius: 8px; }
-        .modal button { margin-right: 10px; }
+        .message.sent .message-bubble { background: #4CAF50; color: white; border-bottom-right-radius: 4px; }
+        .message.received .message-bubble { background: white; color: #333; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+        .message-time { font-size: 10px; margin-top: 4px; color: #999; }
+        .chat-input-area { display: flex; gap: 10px; padding: 15px; background: white; border-top: 1px solid #ddd; }
+        .chat-input-area input { flex: 1; padding: 12px; border: 1px solid #ddd; border-radius: 8px; }
+        .chat-input-area button { width: auto; padding: 12px 20px; }
         
         @media (max-width: 768px) {
             .sidebar { width: 70px; padding: 15px 10px; }
@@ -70,6 +80,9 @@
             .sidebar h2 span { display: none; }
             .main-content { margin-left: 70px; }
         }
+        
+        .loading { text-align: center; padding: 40px; color: #999; }
+        .refresh-btn { background: #2196F3; color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; margin-bottom: 15px; }
     </style>
 </head>
 <body>
@@ -80,59 +93,72 @@
         <div class="nav-item" onclick="showSection('customers')"><span>👥</span> <span>Customers</span></div>
         <div class="nav-item" onclick="showSection('rides')"><span>🚲</span> <span>Rides</span></div>
         <div class="nav-item" onclick="showSection('earnings')"><span>💰</span> <span>Earnings</span></div>
-        <div class="nav-item" onclick="showSection('driverVerification')"><span>📄</span> <span>Verify Drivers</span></div>
         <div class="nav-item" onclick="showSection('support')"><span>💬</span> <span>Support Chat</span></div>
     </div>
     
     <div class="main-content" id="mainContent">
         <div id="overviewSection">
-            <div class="stats-grid" id="statsGrid"></div>
-            <div class="table-container"><h3>📋 Recent Rides</h3><div id="recentRidesTable"></div></div>
+            <div class="stats-grid" id="statsGrid">
+                <div class="stat-card"><h3>Total Customers</h3><div class="number" id="totalCustomers">-</div></div>
+                <div class="stat-card"><h3>Total Drivers</h3><div class="number" id="totalDrivers">-</div></div>
+                <div class="stat-card"><h3>Total Rides</h3><div class="number" id="totalRides">-</div></div>
+                <div class="stat-card"><h3>Today's Rides</h3><div class="number" id="todayRides">-</div></div>
+                <div class="stat-card"><h3>Total Revenue</h3><div class="number" id="totalRevenue">UGX -</div></div>
+                <div class="stat-card"><h3>Today's Revenue</h3><div class="number" id="todayRevenue">UGX -</div></div>
+            </div>
+            <div class="table-container">
+                <h3>📋 Recent Rides</h3>
+                <div id="recentRidesTable"><div class="loading">Loading...</div></div>
+            </div>
         </div>
         
         <div id="driversSection" style="display:none;">
-            <div class="table-container"><h3>🛵 All Drivers</h3><div id="driversTable"></div></div>
+            <div class="table-container">
+                <h3>🛵 All Drivers</h3>
+                <div id="driversTable"><div class="loading">Loading...</div></div>
+            </div>
         </div>
         
         <div id="customersSection" style="display:none;">
-            <div class="table-container"><h3>👥 All Customers</h3><div id="customersTable"></div></div>
+            <div class="table-container">
+                <h3>👥 All Customers</h3>
+                <div id="customersTable"><div class="loading">Loading...</div></div>
+            </div>
         </div>
         
         <div id="ridesSection" style="display:none;">
-            <div class="table-container"><h3>🚲 All Rides</h3><div id="ridesTable"></div></div>
+            <div class="table-container">
+                <h3>🚲 All Rides</h3>
+                <div id="ridesTable"><div class="loading">Loading...</div></div>
+            </div>
         </div>
         
         <div id="earningsSection" style="display:none;">
-            <div class="stats-grid" id="earningsStatsGrid"></div>
-            <div class="table-container"><h3>💸 Payout History</h3><div id="payoutsTable"></div></div>
-        </div>
-        
-        <div id="driverVerificationSection" style="display:none;">
-            <div class="table-container"><h3>📄 Pending Driver Verifications</h3><div id="pendingDriversList"></div></div>
+            <div class="stats-grid">
+                <div class="stat-card"><h3>Total Revenue</h3><div class="number" id="totalRevenueEarnings">UGX -</div></div>
+                <div class="stat-card"><h3>This Month</h3><div class="number" id="monthRevenue">UGX -</div></div>
+                <div class="stat-card"><h3>Commission (20%)</h3><div class="number" id="commissionAmount">UGX -</div></div>
+            </div>
+            <div class="table-container">
+                <h3>💸 Transaction History</h3>
+                <div id="earningsTable"><div class="loading">Loading...</div></div>
+            </div>
         </div>
         
         <div id="supportSection" style="display:none;">
-            <div class="table-container"><h3>💬 Active Support Conversations</h3><div id="activeConversations"></div></div>
-            <div class="chat-container" id="chatContainer" style="display:none; height:500px; flex-direction:column; background:#f5f5f5; border-radius:15px; overflow:hidden;">
-                <div class="chat-header" style="background:#4CAF50; color:white; padding:15px; font-weight:bold;">Chat with: <span id="chatUserName">User</span> <button onclick="closeChat()" style="float:right; background:transparent; border:none; color:white; cursor:pointer;">✕</button></div>
-                <div id="chatMessages" style="flex:1; overflow-y:auto; padding:15px;"></div>
-                <div style="display:flex; gap:10px; padding:15px; background:white;">
-                    <input type="text" id="chatMessageInput" placeholder="Type a message..." style="flex:1; padding:12px; border:1px solid #ddd; border-radius:8px;">
-                    <button onclick="sendSupportMessage()" style="padding:12px 20px; background:#4CAF50; color:white; border:none; border-radius:8px;">Send</button>
-                </div>
+            <div class="table-container">
+                <h3>💬 Support Conversations</h3>
+                <div id="supportList"><div class="loading">Loading...</div></div>
             </div>
-            <div id="noChatSelected" style="text-align:center; padding:50px; color:#999;">Select a conversation to start chatting</div>
         </div>
     </div>
-    
-    <div id="modal" class="modal"><div class="modal-content"><h3 id="modalTitle"></h3><div id="modalBody"></div><button onclick="closeModal()" class="btn btn-primary">Close</button></div></div>
     
     <script>
         const API_URL = 'https://boda-boda-system.onrender.com';
         let currentSection = 'overview';
-        let activeChatUserId = null;
-        let chatWs = null;
+        let adminWs = null;
         
+        // Admin authentication
         if (!localStorage.getItem('adminAuth')) {
             const password = prompt('Enter Admin Password:');
             if (password === 'BodaAdmin2025!') {
@@ -143,135 +169,183 @@
             }
         }
         
-        async function fetchAPI(endpoint, options = {}) {
+        async function fetchAPI(endpoint) {
             try {
-                const response = await fetch(`${API_URL}${endpoint}`, { headers: { 'Content-Type': 'application/json' }, ...options });
+                const response = await fetch(`${API_URL}${endpoint}`);
                 return await response.json();
-            } catch (error) { return {}; }
+            } catch (error) {
+                console.error('API error:', error);
+                return null;
+            }
         }
         
-        function formatUGX(amount) { return 'UGX ' + (amount || 0).toLocaleString(); }
-        function formatDate(dateStr) { return dateStr ? new Date(dateStr).toLocaleString() : 'N/A'; }
+        function formatUGX(amount) {
+            return 'UGX ' + (amount || 0).toLocaleString();
+        }
+        
+        function formatDate(dateStr) {
+            if (!dateStr) return 'N/A';
+            return new Date(dateStr).toLocaleString();
+        }
         
         async function loadOverview() {
+            // Load stats from real API
             const stats = await fetchAPI('/api/admin/stats');
-            document.getElementById('statsGrid').innerHTML = `
-                <div class="stat-card"><h3>Total Customers</h3><div class="number">${stats.total_customers || 0}</div></div>
-                <div class="stat-card"><h3>Total Drivers</h3><div class="number">${stats.total_drivers || 0}</div></div>
-                <div class="stat-card"><h3>Total Rides</h3><div class="number">${stats.total_rides || 0}</div></div>
-                <div class="stat-card"><h3>Today's Rides</h3><div class="number">${stats.today_rides || 0}</div></div>
-                <div class="stat-card"><h3>Total Revenue</h3><div class="number">${formatUGX(stats.total_revenue)}</div></div>
-                <div class="stat-card"><h3>Today's Revenue</h3><div class="number">${formatUGX(stats.today_revenue)}</div></div>
-            `;
+            if (stats) {
+                document.getElementById('totalCustomers').innerHTML = stats.total_customers || 0;
+                document.getElementById('totalDrivers').innerHTML = stats.total_drivers || 0;
+                document.getElementById('totalRides').innerHTML = stats.total_rides || 0;
+                document.getElementById('todayRides').innerHTML = stats.today_rides || 0;
+                document.getElementById('totalRevenue').innerHTML = formatUGX(stats.total_revenue);
+                document.getElementById('todayRevenue').innerHTML = formatUGX(stats.today_revenue);
+            }
+            
+            // Load recent rides
             const rides = await fetchAPI('/api/admin/rides?limit=10');
-            document.getElementById('recentRidesTable').innerHTML = `
-                <table><thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Status</th><th>Time</th></tr></thead>
-                <tbody>${rides.map(r => `<tr><td>${r.id?.substring(0,8)}</td><td>${r.customer_name || 'N/A'}</td><td>${r.driver_name || 'N/A'}</td><td>${r.distance_km || 0}km</td><td>${formatUGX(r.fare)}</td><td><span class="badge badge-success">${r.status || 'completed'}</span></td><td>${formatDate(r.requested_at)}</td></tr>`).join('')}</tbody></table>`;
+            if (rides && rides.length > 0) {
+                document.getElementById('recentRidesTable').innerHTML = `
+                    <table style="width:100%">
+                        <thead>
+                            <tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Payment</th><th>Status</th><th>Time</th></tr>
+                        </thead>
+                        <tbody>
+                            ${rides.map(ride => `
+                                <tr>
+                                    <td>${ride.id?.substring(0,8)}</td>
+                                    <td>${ride.customer_name || 'N/A'}</td>
+                                    <td>${ride.driver_name || 'N/A'}</td>
+                                    <td>${ride.distance_km || 0}km</td>
+                                    <td>${formatUGX(ride.fare)}</td>
+                                    <td><span class="badge badge-info">${ride.payment_method || 'wallet'}</span></td>
+                                    <td><span class="badge badge-success">${ride.status || 'completed'}</span></td>
+                                    <td>${formatDate(ride.requested_at)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                document.getElementById('recentRidesTable').innerHTML = '<div class="loading">No rides yet</div>';
+            }
         }
         
         async function loadDrivers() {
             const drivers = await fetchAPI('/api/admin/drivers');
-            document.getElementById('driversTable').innerHTML = `
-                <table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Total Rides</th><th>Earnings</th><th>Rating</th><th>Status</th><th>Approved</th></tr></thead>
-                <tbody>${drivers.map(d => `<tr><td>${d.id?.substring(0,8)}</td><td>${d.name || 'N/A'}</td><td>${d.phone || 'N/A'}</td><td>${d.total_rides || 0}</td><td>${formatUGX(d.total_earnings)}</td><td>⭐ ${d.rating || 0}</td><td><span class="badge ${d.is_online ? 'badge-success' : 'badge-danger'}">${d.is_online ? 'Online' : 'Offline'}</span></td><td><span class="badge ${d.is_approved ? 'badge-success' : 'badge-warning'}">${d.is_approved ? 'Approved' : 'Pending'}</span></td></tr>`).join('')}</tbody></table>`;
+            if (drivers && drivers.length > 0) {
+                document.getElementById('driversTable').innerHTML = `
+                    <table style="width:100%">
+                        <thead>
+                            <tr><th>ID</th><th>Name</th><th>Phone</th><th>Rides</th><th>Earnings</th><th>Rating</th><th>Status</th><th>Approved</th></tr>
+                        </thead>
+                        <tbody>
+                            ${drivers.map(d => `
+                                <tr>
+                                    <td>${d.id?.substring(0,8)}</td>
+                                    <td>${d.name || 'N/A'}</td>
+                                    <td>${d.phone || 'N/A'}</td>
+                                    <td>${d.total_rides || 0}</td>
+                                    <td>${formatUGX(d.total_earnings)}</td>
+                                    <td>⭐ ${d.rating || 0}</td>
+                                    <td><span class="badge ${d.is_online ? 'badge-success' : 'badge-danger'}">${d.is_online ? 'Online' : 'Offline'}</span></td>
+                                    <td><span class="badge ${d.is_approved ? 'badge-success' : 'badge-warning'}">${d.is_approved ? 'Approved' : 'Pending'}</span></td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                document.getElementById('driversTable').innerHTML = '<div class="loading">No drivers yet</div>';
+            }
         }
         
-        function loadCustomers() {
-            document.getElementById('customersTable').innerHTML = '<table><thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Total Rides</th><th>Joined</th></tr></thead><tbody><tr><td colspan="5" style="text-align:center;">Loading...</td></tr></tbody></table>';
+        async function loadCustomers() {
+            // Get customers from users with role='customer'
+            const users = await fetchAPI('/api/admin/users?role=customer');
+            if (users && users.length > 0) {
+                document.getElementById('customersTable').innerHTML = `
+                    <table style="width:100%">
+                        <thead><tr><th>ID</th><th>Name</th><th>Phone</th><th>Rides</th><th>Joined</th></tr></thead>
+                        <tbody>
+                            ${users.map(u => `
+                                <tr>
+                                    <td>${u.id?.substring(0,8)}</td>
+                                    <td>${u.name || 'N/A'}</td>
+                                    <td>${u.phone || 'N/A'}</td>
+                                    <td>${u.total_rides || 0}</td>
+                                    <td>${formatDate(u.created_at)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
+            } else {
+                document.getElementById('customersTable').innerHTML = '<div class="loading">No customers yet</div>';
+            }
         }
         
         async function loadRides() {
             const rides = await fetchAPI('/api/admin/rides?limit=100');
-            document.getElementById('ridesTable').innerHTML = `
-                <table><thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Payment</th><th>Status</th><th>Time</th></tr></thead>
-                <tbody>${rides.map(r => `<tr><td>${r.id?.substring(0,8)}</td><td>${r.customer_name || 'N/A'}</td><td>${r.driver_name || 'N/A'}</td><td>${r.distance_km || 0}km</td><td>${formatUGX(r.fare)}</td><td>${r.payment_method || 'wallet'}</td><td><span class="badge badge-success">${r.status || 'completed'}</span></td><td>${formatDate(r.requested_at)}</td></tr>`).join('')}</tbody></table>`;
-        }
-        
-        function loadEarnings() {
-            document.getElementById('earningsStatsGrid').innerHTML = `<div class="stat-card"><h3>Total Platform Revenue</h3><div class="number">${formatUGX(0)}</div></div><div class="stat-card"><h3>This Month</h3><div class="number">${formatUGX(0)}</div></div><div class="stat-card"><h3>Commission (20%)</h3><div class="number">${formatUGX(0)}</div></div>`;
-            document.getElementById('payoutsTable').innerHTML = '<table><thead><tr><th>Date</th><th>Driver</th><th>Amount</th><th>Status</th></tr></thead><tbody><tr><td colspan="4" style="text-align:center;">No payouts recorded</td></tr></tbody></table>';
-        }
-        
-        async function loadPendingDrivers() {
-            const data = await fetchAPI('/api/admin/pending-drivers');
-            const container = document.getElementById('pendingDriversList');
-            if (data.drivers && data.drivers.length > 0) {
-                container.innerHTML = `<table><thead><tr><th>Name</th><th>Phone</th><th>License</th><th>Bike Reg</th><th>Documents</th><th>Submitted</th><th>Action</th></tr></thead><tbody>${data.drivers.map(d => `
-                    <tr><td>${d.name}</td><td>${d.phone}</td><td>${d.license_number || 'N/A'}</td><td>${d.bike_registration || 'N/A'}</td>
-                    <td><a href="${d.license_photo}" target="_blank">License</a> | <a href="${d.bike_registration_photo}" target="_blank">Bike</a>${d.profile_photo ? ` | <a href="${d.profile_photo}" target="_blank">Profile</a>` : ''}</td>
-                    <td>${formatDate(d.submitted_at)}</td>
-                    <td><button class="btn btn-primary" onclick="verifyDriver('${d.id}', 'approve')" style="margin-right:5px;">✅ Approve</button><button class="btn btn-danger" onclick="verifyDriver('${d.id}', 'reject')">❌ Reject</button></td></tr>
-                `).join('')}</tbody></table>`;
+            if (rides && rides.length > 0) {
+                document.getElementById('ridesTable').innerHTML = `
+                    <table style="width:100%">
+                        <thead><tr><th>ID</th><th>Customer</th><th>Driver</th><th>Distance</th><th>Fare</th><th>Payment</th><th>Status</th><th>Time</th></tr></thead>
+                        <tbody>
+                            ${rides.map(ride => `
+                                <tr>
+                                    <td>${ride.id?.substring(0,8)}</td>
+                                    <td>${ride.customer_name || 'N/A'}</td>
+                                    <td>${ride.driver_name || 'N/A'}</td>
+                                    <td>${ride.distance_km || 0}km</td>
+                                    <td>${formatUGX(ride.fare)}</td>
+                                    <td><span class="badge badge-info">${ride.payment_method || 'wallet'}</span></td>
+                                    <td><span class="badge badge-success">${ride.status || 'completed'}</span></td>
+                                    <td>${formatDate(ride.requested_at)}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                `;
             } else {
-                container.innerHTML = '<div style="text-align:center; padding:40px;">No pending driver verifications</div>';
+                document.getElementById('ridesTable').innerHTML = '<div class="loading">No rides yet</div>';
             }
         }
         
-        async function verifyDriver(driverId, action) {
-            let reason = '';
-            if (action === 'reject') { reason = prompt('Please enter rejection reason:'); if (!reason) return; }
-            const response = await fetch(`${API_URL}/api/admin/verify-driver/${driverId}`, {
-                method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: action, reason: reason })
-            });
-            const data = await response.json();
-            if (data.success) { alert(data.message); loadPendingDrivers(); loadDrivers(); }
-        }
-        
-        // Support Chat
-        let conversations = JSON.parse(localStorage.getItem('supportConversations') || '[]');
-        function loadSupportChat() {
-            const users = [...new Set(conversations.map(c => c.user_id))];
-            document.getElementById('activeConversations').innerHTML = `<table><thead><tr><th>User</th><th>Last Message</th><th>Time</th><th>Action</th></tr></thead><tbody>${users.map(userId => {
-                const userConversations = conversations.filter(c => c.user_id === userId);
-                const lastMsg = userConversations[userConversations.length - 1];
-                return `<tr><td>User: ${userId.substring(0,8)}</td><td>${lastMsg?.message?.substring(0,30) || ''}</td><td>${formatDate(lastMsg?.timestamp)}</td><td><button class="btn btn-primary" onclick="openChatWithUser('${userId}')">Chat</button></td></tr>`;
-            }).join('')}${users.length === 0 ? '<tr><td colspan="4" style="text-align:center;">No active conversations</td></tr>' : ''}</tbody></table>`;
-        }
-        
-        function openChatWithUser(userId) {
-            activeChatUserId = userId;
-            document.getElementById('noChatSelected').style.display = 'none';
-            document.getElementById('chatContainer').style.display = 'flex';
-            document.getElementById('chatUserName').innerHTML = userId.substring(0, 8);
-            loadChatMessages();
-            if (chatWs) chatWs.close();
-            chatWs = new WebSocket(`wss://${API_URL.replace('https://', '')}/ws/admin/chat/${userId}`);
-            chatWs.onmessage = (e) => { const msg = JSON.parse(e.data); addChatMessage(msg.message, msg.from, msg.timestamp); };
-        }
-        
-        function loadChatMessages() { document.getElementById('chatMessages').innerHTML = ''; }
-        function addChatMessage(message, from, timestamp) {
-            const isSent = from === 'admin';
-            document.getElementById('chatMessages').innerHTML += `<div class="message ${isSent ? 'sent' : 'received'}" style="margin-bottom:10px; display:flex; justify-content:${isSent ? 'flex-end' : 'flex-start'}"><div style="max-width:70%; padding:10px 15px; border-radius:18px; background:${isSent ? '#4CAF50' : '#ddd'}; color:${isSent ? 'white' : 'black'}"><div>${message}</div><div style="font-size:10px; opacity:0.7;">${new Date(timestamp).toLocaleTimeString()}</div></div></div>`;
-            document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-        }
-        
-        function sendSupportMessage() {
-            const input = document.getElementById('chatMessageInput');
-            if (!input.value.trim() || !activeChatUserId) return;
-            if (chatWs && chatWs.readyState === WebSocket.OPEN) {
-                chatWs.send(JSON.stringify({ type: 'message', message: input.value, to: activeChatUserId, from: 'admin' }));
-                addChatMessage(input.value, 'admin', new Date().toISOString());
-                input.value = '';
+        async function loadEarnings() {
+            const stats = await fetchAPI('/api/admin/stats');
+            if (stats) {
+                document.getElementById('totalRevenueEarnings').innerHTML = formatUGX(stats.total_revenue);
+                document.getElementById('commissionAmount').innerHTML = formatUGX((stats.total_revenue || 0) * 0.2);
+                document.getElementById('monthRevenue').innerHTML = formatUGX(stats.total_revenue);
             }
+            document.getElementById('earningsTable').innerHTML = '<div class="loading">Transaction history will appear here</div>';
         }
-        function closeChat() { document.getElementById('chatContainer').style.display = 'none'; document.getElementById('noChatSelected').style.display = 'block'; activeChatUserId = null; if (chatWs) chatWs.close(); }
         
         function showSection(section) {
             currentSection = section;
-            const sections = ['overview', 'drivers', 'customers', 'rides', 'earnings', 'driverVerification', 'support'];
-            sections.forEach(s => { document.getElementById(`${s}Section`).style.display = s === section ? 'block' : 'none'; });
-            document.querySelectorAll('.nav-item').forEach((item, i) => { item.classList.toggle('active', item.innerText.toLowerCase().includes(section)); });
+            const sections = ['overview', 'drivers', 'customers', 'rides', 'earnings', 'support'];
+            sections.forEach(s => {
+                const el = document.getElementById(`${s}Section`);
+                if (el) el.style.display = s === section ? 'block' : 'none';
+            });
+            document.querySelectorAll('.nav-item').forEach((item, i) => {
+                item.classList.toggle('active', item.innerText.toLowerCase().includes(section));
+            });
+            
             if (section === 'overview') loadOverview();
             if (section === 'drivers') loadDrivers();
+            if (section === 'customers') loadCustomers();
             if (section === 'rides') loadRides();
             if (section === 'earnings') loadEarnings();
-            if (section === 'driverVerification') loadPendingDrivers();
-            if (section === 'support') loadSupportChat();
         }
         
-        function closeModal() { document.getElementById('modal').style.display = 'none'; }
+        // Auto-refresh every 30 seconds
+        setInterval(() => {
+            if (currentSection === 'overview') loadOverview();
+            if (currentSection === 'drivers') loadDrivers();
+            if (currentSection === 'rides') loadRides();
+        }, 30000);
+        
+        // Initial load
         loadOverview();
     </script>
 </body>
