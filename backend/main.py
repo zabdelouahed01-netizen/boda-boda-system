@@ -725,6 +725,127 @@ async def health():
     return {"status": "ok"}
 
 
+
+
+
+
+
+
+
+
+from fastapi import Depends, HTTPException, status
+from typing import List
+from pydantic import BaseModel
+
+# Pydantic models for driver responses
+class DriverDocumentResponse(BaseModel):
+    id: int
+    name: str
+    phone: str
+    email: Optional[str] = None
+    status: str
+    is_approved: bool
+    documents_status: str
+    license_number: Optional[str] = None
+    vehicle_type: Optional[str] = None
+    vehicle_plate: Optional[str] = None
+    documents_urls: Optional[dict] = None
+    created_at: datetime
+
+# Get all pending drivers (for admin review)
+@app.get("/api/admin/drivers/pending", response_model=List[DriverDocumentResponse])
+async def get_pending_drivers():
+    query = """
+        SELECT id, name, phone, email, status, is_approved, documents_status,
+               license_number, vehicle_type, vehicle_plate, documents_urls, created_at
+        FROM drivers 
+        WHERE is_approved = false AND (status = 'pending' OR status = 'inactive')
+        ORDER BY created_at DESC
+    """
+    drivers = await database.fetch_all(query)
+    return drivers
+
+# Get all drivers (approved + pending) for admin dashboard
+@app.get("/api/admin/drivers/all", response_model=List[DriverDocumentResponse])
+async def get_all_drivers():
+    query = """
+        SELECT id, name, phone, email, status, is_approved, documents_status,
+               license_number, vehicle_type, vehicle_plate, documents_urls, created_at
+        FROM drivers 
+        ORDER BY created_at DESC
+    """
+    drivers = await database.fetch_all(query)
+    return drivers
+
+# Approve a driver
+@app.put("/api/admin/drivers/{driver_id}/approve")
+async def approve_driver(driver_id: int):
+    query = """
+        UPDATE drivers 
+        SET is_approved = true, 
+            status = 'active', 
+            documents_status = 'verified',
+            approved_at = NOW()
+        WHERE id = $1
+        RETURNING id, name, phone
+    """
+    result = await database.fetch_one(query, driver_id)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    
+    return {"message": f"Driver {result['name']} approved successfully", "driver": result}
+
+# Reject a driver (with reason)
+class RejectDriverRequest(BaseModel):
+    reason: str
+
+@app.put("/api/admin/drivers/{driver_id}/reject")
+async def reject_driver(driver_id: int, reject_data: RejectDriverRequest):
+    query = """
+        UPDATE drivers 
+        SET is_approved = false, 
+            status = 'rejected', 
+            documents_status = 'rejected',
+            rejection_reason = $2,
+            rejected_at = NOW()
+        WHERE id = $1
+        RETURNING id, name, phone
+    """
+    result = await database.fetch_one(query, driver_id, reject_data.reason)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    
+    return {"message": f"Driver {result['name']} rejected", "driver": result}
+
+# Get driver documents URLs
+@app.get("/api/admin/drivers/{driver_id}/documents")
+async def get_driver_documents(driver_id: int):
+    query = """
+        SELECT documents_urls, name, phone
+        FROM drivers 
+        WHERE id = $1
+    """
+    result = await database.fetch_one(query, driver_id)
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    
+    return {
+        "driver_name": result['name'],
+        "phone": result['phone'],
+        "documents": result['documents_urls'] or {}
+    }
+
+
+
+
+
+
+
+
+
 # ============================================
 # AUTHENTICATION ENDPOINTS
 # ============================================
