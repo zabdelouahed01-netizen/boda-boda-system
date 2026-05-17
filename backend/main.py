@@ -679,6 +679,8 @@ async def startup_event():
         await release_db(conn)
     print("✅ Database initialized and ready")
 
+
+
 # ============================================
 # CONNECTION MANAGER
 # ============================================
@@ -711,6 +713,21 @@ class ConnectionManager:
         return False
 
 manager = ConnectionManager()
+
+
+@app.get("/api/admin/users")
+async def get_all_users(role: str = None):
+    conn = await get_db()
+    if role:
+        users = await conn.fetch("SELECT * FROM users WHERE role = $1 ORDER BY created_at DESC", role)
+    else:
+        users = await conn.fetch("SELECT * FROM users ORDER BY created_at DESC")
+    await release_db(conn)
+    return [dict(u) for u in users]
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
 
 # ============================================
 # AUTHENTICATION ENDPOINTS
@@ -1116,6 +1133,10 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
         manager.disconnect(customer_id)
         print(f"🚪 Customer {customer_id[:8]} disconnected")
 
+
+
+        
+
 # ============================================
 # RUN SERVER
 # ============================================
@@ -1131,19 +1152,6 @@ async def root():
         "active_connections": len(manager.active_connections)
     }
 
-
-@app.get("/api/admin/users")
-async def get_all_users(role: str = None):
-    conn = await get_db()
-    if role:
-        users = await conn.fetch("SELECT * FROM users WHERE role = $1 ORDER BY created_at DESC", role)
-    else:
-        users = await conn.fetch("SELECT * FROM users ORDER BY created_at DESC")
-    await release_db(conn)
-    return [dict(u) for u in users]
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
