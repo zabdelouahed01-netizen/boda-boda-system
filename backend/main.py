@@ -10,10 +10,11 @@ import shutil
 import asyncio
 import random
 from datetime import datetime, timedelta
-from typing import Dict, Optional, Tuple
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form
+from typing import Dict, Optional, Tuple, List
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from pydantic import BaseModel
 import uvicorn
 
 # ============================================
@@ -234,6 +235,28 @@ async def init_db():
     
     await release_db(conn)
     print("✅ PostgreSQL database ready")
+
+# ============================================
+# PYDANTIC MODELS FOR DRIVER APPROVAL
+# ============================================
+
+class DriverApprovalResponse(BaseModel):
+    id: str
+    name: str
+    phone: str
+    license_number: Optional[str] = None
+    bike_registration: Optional[str] = None
+    bike_model: Optional[str] = None
+    is_approved: int
+    status: str
+    submitted_at: Optional[datetime] = None
+    license_photo: Optional[str] = None
+    bike_registration_photo: Optional[str] = None
+    profile_photo: Optional[str] = None
+    rejection_reason: Optional[str] = None
+
+class RejectDriverRequest(BaseModel):
+    reason: str
 
 # ============================================
 # SMS FUNCTION - Africa's Talking
@@ -476,7 +499,7 @@ async def get_pending_drivers():
     conn = await get_db()
     results = await conn.fetch('''
         SELECT u.id, u.name, u.phone, d.license_number, d.bike_registration,
-               dd.license_photo, dd.bike_registration_photo, dd.profile_photo, dd.submitted_at
+               dd.license_photo, dd.bike_registration_photo, dd.profile_photo, dd.submitted_at, dd.status
         FROM driver_documents dd
         JOIN users u ON dd.driver_id = u.id
         LEFT JOIN drivers d ON u.id = d.user_id
@@ -559,7 +582,8 @@ async def get_admin_rides(limit=50):
 async def get_admin_drivers():
     conn = await get_db()
     drivers = await conn.fetch('''
-        SELECT u.*, d.total_earnings, d.is_online, d.is_approved, d.rating as driver_rating
+        SELECT u.*, d.total_earnings, d.is_online, d.is_approved, d.rating as driver_rating,
+               d.license_number, d.bike_registration, d.bike_model
         FROM users u
         JOIN drivers d ON u.id = d.user_id
         WHERE u.role = 'driver'
@@ -647,11 +671,9 @@ connections = {}
 
 app = FastAPI()
 
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # This will work immediately
-
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -674,8 +696,6 @@ async def startup_event():
     finally:
         await release_db(conn)
     print("✅ Database initialized and ready")
-
-
 
 # ============================================
 # CONNECTION MANAGER
@@ -710,141 +730,219 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# ============================================
+# ADMIN DRIVER APPROVAL ENDPOINTS (NEW)
+# ============================================
 
-@app.get("/api/admin/users")
-async def get_all_users(role: str = None):
+@app.get("/api/admin/drivers/pending")
+async def get_pending_drivers_admin():
+    """Get all drivers with pending document approval"""
     conn = await get_db()
-    if role:
-        users = await conn.fetch("SELECT * FROM users WHERE role = $1 ORDER BY created_at DESC", role)
-    else:
-        users = await conn.fetch("SELECT * FROM users ORDER BY created_at DESC")
-    await release_db(conn)
-    return [dict(u) for u in users]
-@app.get("/health")
-async def health():
-    return {"status": "ok"}
+    try:
+        drivers = await conn.fetch('''
+            SELECT 
+                u.id, u.name, u.phone,
+                d.license_number, d.bike_registration, d.bike_model,
+                d.is_approved,
+                dd.status, dd.submitted_at, dd.license_photo, 
+                dd.bike_registration_photo, dd.profile_photo,
+                dd.rejection_reason
+            FROM driver_documents dd
+            JOIN users u ON dd.driver_id = u.id
+            LEFT JOIN drivers d ON u.id = d.user_id
+            WHERE dd.status = 'pending'
+            ORDER BY dd.submitted_at ASC
+        ''')
+        
+        result = []
+        for d in drivers:
+            result.append({
+                "id": d['id'],
+                "name": d['name'],
+                "phone": d['phone'],
+                "license_number": d['license_number'],
+                "bike_registration": d['bike_registration'],
+                "bike_model": d['bike_model'],
+                "is_approved": d['is_approved'],
+                "status": d['status'],
+                "submitted_at": d['submitted_at'].isoformat() if d['submitted_at'] else None,
+                "license_photo": d['license_photo'],
+                "bike_registration_photo": d['bike_registration_photo'],
+                "profile_photo": d['profile_photo'],
+                "rejection_reason": d['rejection_reason']
+            })
+        
+        await release_db(conn)
+        return result
+    except Exception as e:
+        await release_db(conn)
+        print(f"Error getting pending drivers: {e}")
+        return []
 
+@app.get("/api/admin/drivers/all")
+async def get_all_drivers_admin():
+    """Get all drivers with their document status"""
+    conn = await get_db()
+    try:
+        drivers = await conn.fetch('''
+            SELECT 
+                u.id, u.name, u.phone, u.rating, u.total_rides,
+                d.license_number, d.bike_registration, d.bike_model,
+                d.is_approved, d.is_online, d.total_earnings,
+                dd.status as doc_status, dd.submitted_at
+            FROM users u
+            LEFT JOIN drivers d ON u.id = d.user_id
+            LEFT JOIN driver_documents dd ON u.id = dd.driver_id
+            WHERE u.role = 'driver'
+            ORDER BY u.created_at DESC
+        ''')
+        
+        result = []
+        for d in drivers:
+            result.append({
+                "id": d['id'],
+                "name": d['name'],
+                "phone": d['phone'],
+                "rating": d['rating'] or 0,
+                "total_rides": d['total_rides'] or 0,
+                "license_number": d['license_number'],
+                "bike_registration": d['bike_registration'],
+                "bike_model": d['bike_model'],
+                "is_approved": d['is_approved'] or 0,
+                "is_online": d['is_online'] or 0,
+                "total_earnings": d['total_earnings'] or 0,
+                "doc_status": d['doc_status'] or 'not_submitted',
+                "submitted_at": d['submitted_at'].isoformat() if d['submitted_at'] else None
+            })
+        
+        await release_db(conn)
+        return result
+    except Exception as e:
+        await release_db(conn)
+        print(f"Error getting all drivers: {e}")
+        return []
 
-
-
-
-
-
-
-
-
-from fastapi import Depends, HTTPException, status
-from typing import List
-from pydantic import BaseModel
-
-# Pydantic models for driver responses
-class DriverDocumentResponse(BaseModel):
-    id: int
-    name: str
-    phone: str
-    email: Optional[str] = None
-    status: str
-    is_approved: bool
-    documents_status: str
-    license_number: Optional[str] = None
-    vehicle_type: Optional[str] = None
-    vehicle_plate: Optional[str] = None
-    documents_urls: Optional[dict] = None
-    created_at: datetime
-
-# Get all pending drivers (for admin review)
-@app.get("/api/admin/drivers/pending", response_model=List[DriverDocumentResponse])
-async def get_pending_drivers():
-    query = """
-        SELECT id, name, phone, email, status, is_approved, documents_status,
-               license_number, vehicle_type, vehicle_plate, documents_urls, created_at
-        FROM drivers 
-        WHERE is_approved = false AND (status = 'pending' OR status = 'inactive')
-        ORDER BY created_at DESC
-    """
-    drivers = await database.fetch_all(query)
-    return drivers
-
-# Get all drivers (approved + pending) for admin dashboard
-@app.get("/api/admin/drivers/all", response_model=List[DriverDocumentResponse])
-async def get_all_drivers():
-    query = """
-        SELECT id, name, phone, email, status, is_approved, documents_status,
-               license_number, vehicle_type, vehicle_plate, documents_urls, created_at
-        FROM drivers 
-        ORDER BY created_at DESC
-    """
-    drivers = await database.fetch_all(query)
-    return drivers
-
-# Approve a driver
 @app.put("/api/admin/drivers/{driver_id}/approve")
-async def approve_driver(driver_id: int):
-    query = """
-        UPDATE drivers 
-        SET is_approved = true, 
-            status = 'active', 
-            documents_status = 'verified',
-            approved_at = NOW()
-        WHERE id = $1
-        RETURNING id, name, phone
-    """
-    result = await database.fetch_one(query, driver_id)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Driver not found")
-    
-    return {"message": f"Driver {result['name']} approved successfully", "driver": result}
-
-# Reject a driver (with reason)
-class RejectDriverRequest(BaseModel):
-    reason: str
+async def approve_driver_admin(driver_id: str):
+    """Approve a driver's documents and activate their account"""
+    conn = await get_db()
+    try:
+        # Check if driver exists
+        driver = await conn.fetchrow("SELECT id FROM users WHERE id = $1 AND role = 'driver'", driver_id)
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver not found")
+        
+        # Update driver_documents status
+        await conn.execute("""
+            UPDATE driver_documents 
+            SET status = 'approved', reviewed_at = CURRENT_TIMESTAMP 
+            WHERE driver_id = $1
+        """, driver_id)
+        
+        # Update drivers table
+        await conn.execute("""
+            UPDATE drivers 
+            SET is_approved = 1 
+            WHERE user_id = $1
+        """, driver_id)
+        
+        # Get driver name for response
+        user = await conn.fetchrow("SELECT name FROM users WHERE id = $1", driver_id)
+        
+        await release_db(conn)
+        return {
+            "success": True, 
+            "message": f"Driver {user['name'] if user else driver_id} approved successfully",
+            "driver_id": driver_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await release_db(conn)
+        print(f"Error approving driver: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.put("/api/admin/drivers/{driver_id}/reject")
-async def reject_driver(driver_id: int, reject_data: RejectDriverRequest):
-    query = """
-        UPDATE drivers 
-        SET is_approved = false, 
-            status = 'rejected', 
-            documents_status = 'rejected',
-            rejection_reason = $2,
-            rejected_at = NOW()
-        WHERE id = $1
-        RETURNING id, name, phone
-    """
-    result = await database.fetch_one(query, driver_id, reject_data.reason)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Driver not found")
-    
-    return {"message": f"Driver {result['name']} rejected", "driver": result}
+async def reject_driver_admin(driver_id: str, reject_data: RejectDriverRequest):
+    """Reject a driver's application with reason"""
+    conn = await get_db()
+    try:
+        # Check if driver exists
+        driver = await conn.fetchrow("SELECT id FROM users WHERE id = $1 AND role = 'driver'", driver_id)
+        if not driver:
+            raise HTTPException(status_code=404, detail="Driver not found")
+        
+        # Update driver_documents status
+        await conn.execute("""
+            UPDATE driver_documents 
+            SET status = 'rejected', reviewed_at = CURRENT_TIMESTAMP, rejection_reason = $2
+            WHERE driver_id = $1
+        """, driver_id, reject_data.reason)
+        
+        # Update drivers table
+        await conn.execute("""
+            UPDATE drivers 
+            SET is_approved = 0 
+            WHERE user_id = $1
+        """, driver_id)
+        
+        # Get driver name for response
+        user = await conn.fetchrow("SELECT name FROM users WHERE id = $1", driver_id)
+        
+        await release_db(conn)
+        return {
+            "success": True, 
+            "message": f"Driver {user['name'] if user else driver_id} rejected. Reason: {reject_data.reason}",
+            "driver_id": driver_id
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await release_db(conn)
+        print(f"Error rejecting driver: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
-# Get driver documents URLs
 @app.get("/api/admin/drivers/{driver_id}/documents")
-async def get_driver_documents(driver_id: int):
-    query = """
-        SELECT documents_urls, name, phone
-        FROM drivers 
-        WHERE id = $1
-    """
-    result = await database.fetch_one(query, driver_id)
-    
-    if not result:
-        raise HTTPException(status_code=404, detail="Driver not found")
-    
-    return {
-        "driver_name": result['name'],
-        "phone": result['phone'],
-        "documents": result['documents_urls'] or {}
-    }
-
-
-
-
-
-
-
-
+async def get_driver_documents_admin(driver_id: str):
+    """Get document URLs for a specific driver"""
+    conn = await get_db()
+    try:
+        result = await conn.fetchrow("""
+            SELECT 
+                dd.license_photo, dd.bike_registration_photo, dd.profile_photo,
+                dd.status, dd.rejection_reason, dd.submitted_at,
+                u.name, u.phone
+            FROM driver_documents dd
+            JOIN users u ON dd.driver_id = u.id
+            WHERE dd.driver_id = $1
+        """, driver_id)
+        
+        if not result:
+            raise HTTPException(status_code=404, detail="Driver documents not found")
+        
+        documents = {}
+        if result['license_photo']:
+            documents['license_photo'] = result['license_photo']
+        if result['bike_registration_photo']:
+            documents['bike_registration_photo'] = result['bike_registration_photo']
+        if result['profile_photo']:
+            documents['profile_photo'] = result['profile_photo']
+        
+        await release_db(conn)
+        return {
+            "driver_name": result['name'],
+            "phone": result['phone'],
+            "status": result['status'],
+            "rejection_reason": result['rejection_reason'],
+            "submitted_at": result['submitted_at'].isoformat() if result['submitted_at'] else None,
+            "documents": documents
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        await release_db(conn)
+        print(f"Error getting driver documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ============================================
 # AUTHENTICATION ENDPOINTS
@@ -994,6 +1092,16 @@ async def admin_rides(limit: int = 50):
 @app.get("/api/admin/drivers")
 async def admin_drivers():
     return await get_admin_drivers()
+
+@app.get("/api/admin/users")
+async def get_all_users(role: str = None):
+    conn = await get_db()
+    if role:
+        users = await conn.fetch("SELECT * FROM users WHERE role = $1 ORDER BY created_at DESC", role)
+    else:
+        users = await conn.fetch("SELECT * FROM users ORDER BY created_at DESC")
+    await release_db(conn)
+    return [dict(u) for u in users]
 
 @app.get("/api/admin/pending-drivers")
 async def pending_drivers():
@@ -1250,13 +1358,13 @@ async def customer_ws(customer_id: str, websocket: WebSocket):
         manager.disconnect(customer_id)
         print(f"🚪 Customer {customer_id[:8]} disconnected")
 
-
-
-        
-
 # ============================================
-# RUN SERVER
+# HEALTH AND ROOT ENDPOINTS
 # ============================================
+
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
 
 @app.get("/")
 async def root():
@@ -1269,6 +1377,9 @@ async def root():
         "active_connections": len(manager.active_connections)
     }
 
+# ============================================
+# RUN SERVER
+# ============================================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
